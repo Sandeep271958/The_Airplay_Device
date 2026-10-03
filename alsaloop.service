@@ -1,0 +1,17 @@
+[Unit]
+Description=ALSA Loopback to DAC relay (via softvol)
+After=sound.target
+Requires=sound.target
+
+[Service]
+Type=simple
+# Relay audio from the shared loopback capture to the DAC through softvol.
+#   -C loopcapture   : read from dsnoop on hw:Loopback,1,0
+#   -P softvol_out   : write to softvol → hw:sndrpihifiberry,0
+#   -t 50000         : target latency 50 ms (good balance of quality vs responsiveness)
+ExecStart=/usr/bin/alsaloop -C loopcapture -P softvol_out -t 50000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

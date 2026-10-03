@@ -1,0 +1,16 @@
+[Unit]
+Description=AirPlay/Bluetooth Audio Receiver Controller
+After=network-online.target sound.target shairport-sync.service alsaloop.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/home/pi/Airplaydevice/venv/bin/python /home/pi/Airplaydevice/main.py
+WorkingDirectory=/home/pi/Airplaydevice
+Restart=on-failure
+RestartSec=5
+# Root is required for SPI (WS2812) and GPIO access
+User=root
+
+[Install]
+WantedBy=multi-user.target

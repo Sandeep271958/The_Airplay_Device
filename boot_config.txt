@@ -1,0 +1,12 @@
+# =====================================================================
+# Add these lines to /boot/firmware/config.txt
+# =====================================================================
+
+# Disable the default onboard audio (we use the I2S DAC instead)
+dtparam=audio=off
+
+# Enable the I2S DAC overlay (PCM5102A is hifiberry-dac compatible)
+dtoverlay=hifiberry-dac
+
+# Enable SPI interface (used by WS2812 LED driver)
+dtparam=spi=on

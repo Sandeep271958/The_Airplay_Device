@@ -1,0 +1,9 @@
+# Python dependencies for AirPlay Audio Receiver
+# Install with: pip install -r requirements.txt
+
+rpi_ws281x       # WS2812 LED strip driver (SPI mode)
+pillow           # Image processing (album art, TFT rendering)
+numpy            # Fast vectorised image processing (boot splash)
+spidev           # SPI bus access
+gpiozero         # GPIO button handling (also available via apt)
+st7789           # ST7789 TFT display driver (for future hardware)
