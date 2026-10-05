@@ -9,7 +9,7 @@ Hardware:
   - WS2812B Status LED        → connection/playback state indicator
   - WS2812B 8×8 LED Matrix    → real-time frequency visualizer
   - 5D Rocker Joystick        → media & mode controls (7 digital GPIOs)
-  - TFT LCD (deferred)        → album art / visualizer display
+  - TFT LCD                   → album art / visualizer display
 
 Software Stack:
   - shairport-sync   : AirPlay 2 receiver

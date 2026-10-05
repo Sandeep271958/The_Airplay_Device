@@ -12,7 +12,7 @@ I2S is a digital audio interface that sends uncompressed digital audio directly 
 | **PCM5102A I2S DAC** | Highly recommended DAC for Raspberry Pi. Provides excellent audio quality and outputs a standard line-level signal via a 3.5mm jack or RCA pads. |
 | **8x8 WS2812B LED Matrix** | A 64-LED matrix for the dynamic frequency audio visualizer (bass, mids, highs). |
 | **WS2812B Single LED** | The status indicator for connection state. (Cut from a strip or use a standalone module). |
-| **SPI TFT LCD Screen** | To display album art. Recommended: 1.3" ST7789 or 1.54" ST7789 (240×240, square = perfect for album art). **Deferred — purchase TBD.** |
+| **SPI TFT LCD Screen** | 2.8" ST7789 (240x320, vertical) for album art and UI. |
 | **5D Rocker Joystick Module** | Digital 5-way joystick (Up, Down, Left, Right, Center) plus Set/Reset buttons for media controls. |
 | **5V 4A+ Power Supply** | 64 WS2812B LEDs can draw up to ~3.8 Amps at full white brightness. Beefy supply prevents crashes from voltage drops. |
 | **Misc** | MicroSD Card (16GB+), Jumper wires, breadboard/perfboard, 3.5mm audio cable. |
