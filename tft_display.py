@@ -45,7 +45,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 # Display resolution — change these when you know your TFT module.
 # The rendering pipeline is fully resolution-independent.
 DISPLAY_WIDTH  = 240
-DISPLAY_HEIGHT = 240
+DISPLAY_HEIGHT = 320
 
 # Shairport-sync metadata pipe (configured in shairport-sync.conf)
 METADATA_PIPE = "/tmp/shairport-sync-metadata"
@@ -117,8 +117,8 @@ def _load_font_bold(size):
     return _load_font(size)
 
 
-# Pre-load fonts at various sizes (relative to display height for scaling)
-_scale = DISPLAY_HEIGHT / 240.0   # 1.0 at 240px, scales linearly
+# Pre-load fonts at various sizes (relative to display width for scaling)
+_scale = DISPLAY_WIDTH / 240.0   # 1.0 at 240px, prevents massive fonts on portrait displays
 
 FONT_TITLE    = _load_font_bold(int(18 * _scale))
 FONT_ARTIST   = _load_font(int(14 * _scale))
@@ -361,8 +361,8 @@ class ST7789Backend(DisplayBackend):
     """
 
     def __init__(self, width, height,
-                 spi_port=None, spi_cs=None,
-                 dc_pin=None, rst_pin=None, bl_pin=None):
+                 spi_port=1, spi_cs=0,
+                 dc_pin=24, rst_pin=12, bl_pin=20):
         super().__init__(width, height)
         self._display = None
         # Store pin config for when we activate it
@@ -444,9 +444,9 @@ class DisplayRenderer:
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
-        # Layout: art takes the top 60% of the screen, info takes bottom 40%
-        art_h = int(self.h * 0.58)
-        info_y = art_h + int(4 * _scale)
+        # Layout: art is a perfect square at the top, info fills the remaining bottom strip
+        art_h = self.w
+        info_y = art_h + int(8 * _scale)
 
         if meta["art"]:
             # Resize art to fill width, cropping to square if needed
@@ -1002,7 +1002,7 @@ class DisplayController:
 # =====================================================================
 
 # Singleton instances — created when this module is imported
-display_controller = DisplayController()
+display_controller = DisplayController(backend=ST7789Backend(DISPLAY_WIDTH, DISPLAY_HEIGHT))
 
 
 def start_display_threads():

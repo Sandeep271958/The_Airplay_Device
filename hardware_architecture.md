@@ -40,14 +40,21 @@ To avoid hardware resource conflicts, components are mapped to their dedicated h
 | DIN | GPIO 21 (Pin 40) | I2S Data In |
 | SCK | GND | Connect to GND to enable internal PLL clock |
 
-### TFT LCD Screen (Software SPI) -> Album Art
-> **Deferred** — Pin assignments will be finalised when the LCD module is purchased.
-> Because SPI0 is used by the WS2812 LED driver, the TFT will use **software SPI**
-> (bit-banging) on free GPIO pins. This is slightly slower but perfectly fine for
-> displaying album art at low refresh rates.
->
-> Candidate free pins: GPIO 5 (Pin 29), GPIO 6 (Pin 31), GPIO 13 (Pin 33),
-> GPIO 24 (Pin 18), GPIO 25 (Pin 22).
+### TFT LCD Screen (2.8" ST7789 240x320) -> Album Art
+Because hardware SPI0 is used by the WS2812 LED driver to avoid audio interference, and hardware SPI1 conflicts with the I2S DAC, we use a **Software SPI overlay (`spi-gpio`)** for the TFT. 
+
+Add `dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1` to `/boot/firmware/config.txt` to create `/dev/spidev1.0`.
+
+| TFT Pin | RPi Zero 2W Pin | Purpose |
+|:---:|:---|:---|
+| VCC | 3.3V (Pin 1) or 5V (Pin 4) | Power (check display rating) |
+| GND | GND (Pin 9) | Ground |
+| SCL / SCK | GPIO 5 (Pin 29) | SPI1 Clock |
+| SDA / MOSI | GPIO 6 (Pin 31) | SPI1 Data In |
+| RES / RST | GPIO 12 (Pin 32) | Reset |
+| DC | GPIO 24 (Pin 18) | Data/Command |
+| CS | GPIO 25 (Pin 22) | Chip Select (CS0) |
+| BLK | GPIO 20 (Pin 38) | Backlight control |
 
 ### WS2812B LEDs -> Visualizer & Status
 *Optimization Tip: Daisy-chain the status LED and the Matrix to use only ONE GPIO pin.*

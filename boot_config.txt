@@ -10,3 +10,6 @@ dtoverlay=hifiberry-dac
 
 # Enable SPI interface (used by WS2812 LED driver)
 dtparam=spi=on
+
+# Enable Software SPI (Bus 1) for the ST7789 TFT display
+dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1
