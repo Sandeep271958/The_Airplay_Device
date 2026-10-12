@@ -72,16 +72,16 @@ Add `dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1` t
 This module acts as 7 separate digital buttons. The COM pin is usually connected to GND, and the direction pins go to standard GPIOs. We configure the RPi GPIOs with internal Pull-Up resistors in software.
 
 *Assuming COM connects to GND (Active Low inputs):*
-| Rocker Pin | RPi Zero 2W Pin | Mapped Function |
-|:---:|:---|:---|
-| COM | GND (e.g., Pin 14) | Common Ground |
-| UP | GPIO 16 (Pin 36) | Volume Up |
-| DOWN | GPIO 17 (Pin 11) | Volume Down |
-| LEFT | GPIO 22 (Pin 15) | Previous Track |
-| RIGHT | GPIO 23 (Pin 16) | Next Track |
-| MID (Press) | GPIO 26 (Pin 37) | Play / Pause |
-| SET | GPIO 27 (Pin 13) | Cycle Visualizer Modes |
-| RST | GPIO 4 (Pin 7) | Toggle AirPlay / Bluetooth (hold 1 s) |
+| Rocker Pin | Function | RPi GPIO | Physical Pin # | Wire Color |
+|:---:|:---|:---|:---:|:---:|
+| **COM** | Common Ground | GND | Pin 14 | **Black** |
+| **UP** | Volume Up | GPIO 16 | Pin 36 | **White** |
+| **DOWN** | Volume Down | GPIO 17 | Pin 11 | **Grey** |
+| **LEFT** | Previous Track | GPIO 22 | Pin 15 | **Purple** |
+| **RIGHT** | Next Track | GPIO 23 | Pin 16 | **Blue** |
+| **MID (Press)** | Play / Pause | GPIO 26 | Pin 37 | **Green** |
+| **SET** | Cycle Display / Visualizer Modes | GPIO 27 | Pin 13 | **Yellow** |
+| **RST** | Toggle AirPlay ↔ BT (hold 1 s) | GPIO 4 | Pin 7 | **Orange** |
 
 ## 4. Crucial Power Distribution Note
 Do **NOT** power the 8x8 LED matrix directly from the Raspberry Pi's 5V pins. If the matrix lights up fully, it will pull too much current and burn out the Pi's power traces or cause instant reboots.
