@@ -351,91 +351,185 @@ class StubBackend(DisplayBackend):
 
 class ST7789Backend(DisplayBackend):
     """
-    Hardware backend for ST7789-based TFT displays.
-
-    Requires the `st7789` Python package:
-        pip install st7789
-
-    Pin configuration will be set when the hardware module is purchased.
-    This is a template — adjust the constructor pins accordingly.
+    Direct hardware backend for ST7789-based TFT displays.
+    Communicates directly via spidev (/dev/spidev4.0) and gpiozero (lgpio).
+    Bypasses external gpiodevice/libgpiod libraries to prevent resource busy errors.
     """
+
+    CMD_SWRESET = 0x01
+    CMD_SLPOUT  = 0x11
+    CMD_NORON   = 0x13
+    CMD_INVON   = 0x21
+    CMD_INVOFF  = 0x20
+    CMD_DISPON  = 0x29
+    CMD_CASET   = 0x2A
+    CMD_RASET   = 0x2B
+    CMD_RAMWR   = 0x2C
+    CMD_MADCTL  = 0x36
+    CMD_COLMOD  = 0x3A
 
     def __init__(self, width, height,
                  spi_port=4, spi_cs=0,
-                 dc_pin=24, rst_pin=12, bl_pin=20):
+                 dc_pin=24, rst_pin=12, bl_pin=20,
+                 spi_speed_hz=32_000_000):
         super().__init__(width, height)
-        self._display = None
-        self._spi_port = spi_port
-        self._spi_cs   = spi_cs
-        self._dc_pin   = dc_pin
-        self._rst_pin  = rst_pin
-        self._bl_pin   = bl_pin
+        self._spi_port     = spi_port
+        self._spi_cs       = spi_cs
+        self._dc_pin       = dc_pin
+        self._rst_pin      = rst_pin
+        self._bl_pin       = bl_pin
+        self._spi_speed_hz = spi_speed_hz
+
+        self._spi          = None
+        self._dc           = None
+        self._rst          = None
+        self._bl           = None
+        self._ready        = False
+
+    def _write_cmd(self, cmd):
+        self._dc.off()
+        self._spi.writebytes([cmd])
+
+    def _write_data(self, data):
+        self._dc.on()
+        if isinstance(data, int):
+            self._spi.writebytes([data])
+        elif isinstance(data, (list, tuple)):
+            self._spi.writebytes(list(data))
+        else:
+            # Transfer byte buffer in 4096-byte chunks (Linux spidev bufsiz limit)
+            CHUNK = 4096
+            for i in range(0, len(data), CHUNK):
+                self._spi.writebytes2(data[i:i + CHUNK])
+
+    def _set_window(self, x0, y0, x1, y1):
+        self._write_cmd(self.CMD_CASET)
+        self._write_data([x0 >> 8, x0 & 0xFF, x1 >> 8, x1 & 0xFF])
+        self._write_cmd(self.CMD_RASET)
+        self._write_data([y0 >> 8, y0 & 0xFF, y1 >> 8, y1 & 0xFF])
+        self._write_cmd(self.CMD_RAMWR)
 
     def _init_hardware(self):
-        """Lazy-init the ST7789 driver. Called on first show()."""
+        """Initialise GPIO control pins, SPI4 device, and ST7789 controller registers."""
         try:
-            import st7789 as st7789_lib
+            import spidev
+            from gpiozero import OutputDevice
+        except ImportError as e:
+            print(f"[TFT] Required libraries missing ({e}) — falling back to stub backend")
+            self._ready = False
+            return
 
-            # Auto-detect available SPI port if default /dev/spidevX.Y does not exist
-            port = self._spi_port
-            cs = self._spi_cs
+        port = self._spi_port
+        cs = self._spi_cs
 
-            if not os.path.exists(f"/dev/spidev{port}.{cs}"):
-                found = False
-                for p in [4, 1]:
-                    if os.path.exists(f"/dev/spidev{p}.{cs}"):
-                        port = p
-                        found = True
-                        break
-                    elif os.path.exists(f"/dev/spidev{p}.0"):
-                        port = p
-                        cs = 0
-                        found = True
-                        break
-                if not found:
-                    print(f"[TFT] WARNING: Dedicated SPI device for TFT (/dev/spidev4.0 or /dev/spidev1.0) not found!")
-                    print("      ✦ On RPi 4B, add this line to /boot/firmware/config.txt:")
-                    print("            dtoverlay=spi4-1cs,cs0_pin=25")
-                    print("      ✦ Move the purple SCK wire to Pin 26 (GPIO 7).")
-                    print("      ✦ Reboot the Pi with: sudo reboot")
-                    self._display = "STUB"
-                    return
+        # Auto-detect SPI device if /dev/spidev4.0 is not present
+        if not os.path.exists(f"/dev/spidev{port}.{cs}"):
+            for p in [4, 1, 0]:
+                if os.path.exists(f"/dev/spidev{p}.{cs}"):
+                    port = p
+                    break
+                elif os.path.exists(f"/dev/spidev{p}.0"):
+                    port = p
+                    cs = 0
+                    break
 
-            print(f"[TFT] Connecting to ST7789 via /dev/spidev{port}.{cs} (DC={self._dc_pin}, RST={self._rst_pin}, BL={self._bl_pin})...")
-            self._display = st7789_lib.ST7789(
-                port=port,
-                cs=cs,
-                dc=self._dc_pin,
-                rst=self._rst_pin,
-                backlight=self._bl_pin,
-                width=self.width,
-                height=self.height,
-                rotation=0,
-                spi_speed_hz=40_000_000,
-            )
-            if hasattr(self._display, "set_backlight"):
-                self._display.set_backlight(True)
-            print("[TFT] ST7789 driver initialised successfully!")
-        except ImportError:
-            print("[TFT] st7789 library not installed — falling back to stub")
-            self._display = "STUB"
+        if not os.path.exists(f"/dev/spidev{port}.{cs}"):
+            print(f"[TFT] WARNING: Dedicated SPI device /dev/spidev{port}.{cs} not found!")
+            print("      ✦ Ensure dtoverlay=spi4-1cs,cs0_pin=25 is in /boot/firmware/config.txt")
+            self._ready = False
+            return
+
+        print(f"[TFT] Initialising ST7789 on /dev/spidev{port}.{cs} (DC={self._dc_pin}, RST={self._rst_pin}, BL={self._bl_pin})...")
+
+        try:
+            # 1. Claim GPIO lines via gpiozero (lgpio)
+            self._dc = OutputDevice(self._dc_pin, active_high=True, initial_value=False)
+            self._rst = OutputDevice(self._rst_pin, active_high=True, initial_value=True)
+            self._bl = OutputDevice(self._bl_pin, active_high=True, initial_value=False)
+
+            # 2. Turn backlight ON
+            self._bl.on()
+
+            # 3. Open hardware SPI bus
+            self._spi = spidev.SpiDev()
+            self._spi.open(port, cs)
+            self._spi.max_speed_hz = self._spi_speed_hz
+            self._spi.mode = 0
+
+            # 4. Hardware reset cycle
+            self._rst.on()
+            time.sleep(0.05)
+            self._rst.off()
+            time.sleep(0.05)
+            self._rst.on()
+            time.sleep(0.15)
+
+            # 5. ST7789 controller configuration sequence
+            self._write_cmd(self.CMD_SWRESET)
+            time.sleep(0.15)
+
+            self._write_cmd(self.CMD_SLPOUT)
+            time.sleep(0.12)
+
+            self._write_cmd(self.CMD_COLMOD)
+            self._write_data(0x55)  # 16-bit RGB565
+
+            self._write_cmd(self.CMD_MADCTL)
+            self._write_data(0x00)  # Portrait 240x320
+
+            self._write_cmd(self.CMD_INVON)   # Inversion ON (required for ST7789 IPS panels)
+            self._write_cmd(self.CMD_NORON)   # Normal display mode
+            time.sleep(0.01)
+
+            self._write_cmd(self.CMD_DISPON)  # Main display ON
+            time.sleep(0.1)
+
+            self._ready = True
+            print(f"[TFT] ST7789 initialised successfully at {self._spi_speed_hz // 1_000_000} MHz!")
         except Exception as e:
-            print(f"[TFT] ST7789 init failed: {e}")
-            self._display = "STUB"
+            print(f"[TFT] ST7789 hardware init error: {e}")
+            self._ready = False
 
     def show(self, image):
-        if self._display is None:
-            self._init_hardware()
-        if self._display == "STUB":
-            return
-        self._display.display(image)
+        if not self._ready:
+            if self._spi is None and self._dc is None:
+                self._init_hardware()
+            if not self._ready:
+                return
+
+        try:
+            if image.size != (self.width, self.height):
+                image = image.resize((self.width, self.height))
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+
+            # Fast vectorised conversion to RGB565 byte buffer
+            arr = np.asarray(image, dtype=np.uint16)
+            r = arr[:, :, 0]
+            g = arr[:, :, 1]
+            b = arr[:, :, 2]
+            rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+            raw_bytes = rgb565.byteswap().tobytes()
+
+            self._set_window(0, 0, self.width - 1, self.height - 1)
+            self._write_data(raw_bytes)
+        except Exception as e:
+            print(f"[TFT] Frame draw error: {e}")
 
     def cleanup(self):
-        if self._display and self._display != "STUB":
-            try:
-                self._display.set_backlight(False)
-            except Exception:
-                pass
+        try:
+            if self._bl:
+                self._bl.off()
+                self._bl.close()
+            if self._dc:
+                self._dc.close()
+            if self._rst:
+                self._rst.close()
+            if self._spi:
+                self._spi.close()
+        except Exception:
+            pass
+        self._ready = False
 
 
 # =====================================================================
