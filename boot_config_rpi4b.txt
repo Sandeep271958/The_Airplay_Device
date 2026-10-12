@@ -16,6 +16,9 @@ dtparam=audio=on
 # Enable SPI interface (used by WS2812 LED driver on GPIO 10)
 dtparam=spi=on
 
+# Restrict SPI0 to 1 CS (GPIO 8) — frees GPIO 7 (CE1) so SPI4 can claim it for SCLK!
+dtoverlay=spi0-1cs
+
 # Hardware SPI4 for the ST7789 TFT display (MOSI=GPIO 6 Pin 31, SCLK=GPIO 7 Pin 26, CS=GPIO 25 Pin 22)
 # Purple SCK wire moves from Pin 29 to Pin 26 (GPIO 7)
 dtoverlay=spi4-1cs,cs0_pin=25
