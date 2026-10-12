@@ -1,109 +1,135 @@
-# AirPlay Audio Receiver & Visualizer — Hardware Architecture
+# Sandy's AirPlay Device — Hardware & Software Architecture
 
-## 1. Audio Output Strategy
-The Raspberry Pi Zero 2W does not have a built-in analog audio output. To get high-fidelity audio into your 2.1 speaker system, we use an **I2S DAC (Digital-to-Analog Converter)**.
-I2S is a digital audio interface that sends uncompressed digital audio directly from the Pi's CPU to the DAC chip. The DAC converts it to a clean, line-level analog signal that your speakers' amplifier can process.
+## 1. System Overview & Audio Strategy
 
-## 2. Equipment List
+Sandy's AirPlay Device is a dedicated, high-fidelity wireless audio receiver with real-time frequency analysis, dynamic ST7789 TFT album art and track information display, and physical 5D rocker controls.
 
-| Component | Description & Purpose |
-|-----------|-----------------------|
-| **Raspberry Pi Zero 2W** | The core brain handling Wi-Fi, AirPlay decoding, and driving the peripherals. |
-| **PCM5102A I2S DAC** | Highly recommended DAC for Raspberry Pi. Provides excellent audio quality and outputs a standard line-level signal via a 3.5mm jack or RCA pads. |
-| **8x8 WS2812B LED Matrix** | A 64-LED matrix for the dynamic frequency audio visualizer (bass, mids, highs). |
-| **WS2812B Single LED** | The status indicator for connection state. (Cut from a strip or use a standalone module). |
-| **SPI TFT LCD Screen** | 2.8" ST7789 (240x320, vertical) for album art and UI. |
-| **5D Rocker Joystick Module** | Digital 5-way joystick (Up, Down, Left, Right, Center) plus Set/Reset buttons for media controls. |
-| **5V 4A+ Power Supply** | 64 WS2812B LEDs can draw up to ~3.8 Amps at full white brightness. Beefy supply prevents crashes from voltage drops. |
-| **Misc** | MicroSD Card (16GB+), Jumper wires, breadboard/perfboard, 3.5mm audio cable. |
+* **AirPlay Receiver:** `shairport-sync` 4.x running bit-perfect ALSA output.
+* **Audio Interconnect:** ALSA Loopback driver (`snd-aloop`) decoupling the audio stream so both playback and spectrum analysis tap the same audio buffer concurrently without jitter.
+* **Prototyping Platform:** Raspberry Pi 4 Model B (1GB) using the onboard 3.5mm analog output (`bcm2835 Headphones`).
+* **Production Target:** Raspberry Pi Zero 2 W with a PCM5102A I2S DAC (`hifiberry-dac` overlay).
 
-## 3. Hardware Pinout & Wiring Architecture
+---
 
-To avoid hardware resource conflicts, components are mapped to their dedicated hardware interfaces:
-*   **I2S** for the DAC (GPIO 18, 19, 21).
-*   **SPI0** for the WS2812 LEDs (GPIO 10 MOSI) — **NOT PWM**, because PWM shares hardware with I2S.
-*   **Software SPI** for the TFT LCD (pins TBD based on chosen module — deferred).
-*   **Standard GPIOs** for the 5D Rocker digital buttons.
+## 2. Bill of Materials & Equipment List
 
-> **⚠️ Why SPI instead of PWM for LEDs?**
-> GPIO 12/18 (PWM0) shares the same hardware peripheral as the I2S audio bus.
-> When the `hifiberry-dac` overlay is loaded for the DAC, PWM becomes unavailable.
-> Using SPI0 MOSI (GPIO 10) avoids this conflict entirely.
+| Component | Description & Specification | Purpose |
+| :--- | :--- | :--- |
+| **Raspberry Pi 4 Model B** | 1GB / 64-bit ARMv8 Cortex-A72 | Prototype processing engine (Wi-Fi, AirPlay, DSP, SPI4). |
+| **Raspberry Pi Zero 2 W** | Quad-core ARM Cortex-A53 | Production target hardware. |
+| **ST7789 2.8" SPI TFT LCD** | 240×320 IPS display, 4-wire SPI | Real-time album art, track details, scrubber bar, and StandBy clock. |
+| **5D Rocker Joystick** | 5-way digital switch + SET / RST | Volume, track skipping, play/pause, mode cycle, source toggle. |
+| **WS2812B 8×8 LED Matrix** | 64 RGB Addressable LEDs | Real-time audio spectrum frequency visualizer (CAVA). |
+| **WS2812B Status LED** | 1 Single RGB Addressable LED | Connection state indicator (AirPlay / BT). |
+| **PCM5102A I2S DAC** | 32-bit / 384 kHz stereo DAC | Line-level high-fidelity analog audio output (production target). |
+| **Power Supply** | 5V 4A+ DC regulated PSU | Prevents voltage sag during heavy LED matrix illumination. |
 
-### I2S DAC (PCM5102A) -> Audio Output
-| DAC Pin | RPi Zero 2W Pin | Purpose |
-|:---:|:---|:---|
-| VIN | 5V (Pin 2) | Power |
-| GND | GND (Pin 6) | Ground |
-| BCK | GPIO 18 (Pin 12) | I2S Bit Clock |
-| LCK | GPIO 19 (Pin 35) | I2S Word Select (Left/Right Clock) |
-| DIN | GPIO 21 (Pin 40) | I2S Data In |
-| SCK | GND | Connect to GND to enable internal PLL clock |
+---
 
-### TFT LCD Screen (2.8" ST7789 240x320) -> Album Art
-Because hardware SPI0 is used by the WS2812 LED driver to avoid audio interference, and hardware SPI1 conflicts with the I2S DAC, we use a **Software SPI overlay (`spi-gpio`)** for the TFT. 
+## 3. GPIO Header Pinout & Bus Allocation
 
-Add `dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1` to `/boot/firmware/config.txt` to create `/dev/spidev1.0`.
+To avoid hardware resource contention across DMA, PWM, and I2S:
+* **Audio DAC:** I2S interface on GPIO 18 (BCLK), 19 (LRCK), and 21 (DIN).
+* **WS2812B LEDs:** Hardware SPI0 MOSI (GPIO 10 / Pin 19) — avoids PWM0 conflicts with I2S audio.
+* **ST7789 TFT Display:** Dedicated **Hardware SPI4** (`/dev/spidev4.0` @ 32–40 MHz) on RPi 4B; software SPI on Pi Zero 2W.
+* **5D Rocker Joystick:** 7 standard digital GPIO inputs with internal software pull-up resistors.
 
-| TFT Module Pin | Purpose / Function | RPi GPIO | Physical Pin # | Wire Color |
-|:---:|:---|:---|:---:|:---:|
-| **VCC** | 3.3V Power (or 5V if board has 3.3V regulator) | 3V3 | Pin 1 | **Red** |
-| **GND** | Ground | GND | Pin 6 | **Brown** |
-| **CS** | Chip Select (Bus 1) | GPIO 25 | Pin 22 | **Orange** |
-| **RESET** | Display Reset | GPIO 12 | Pin 32 | **Yellow** |
-| **DC** | Data / Command | GPIO 24 | Pin 18 | **Green** |
-| **SDI (MOSI)** | Serial Data In | GPIO 6 | Pin 31 | **Blue** |
-| **SCK** | Serial Clock | GPIO 5 | Pin 29 | **Purple** |
-| **LED** | Backlight Control | GPIO 20 | Pin 38 | **Grey** |
-| *SDO (MISO)* | Display Read (Unused) | — | Disconnected | — |
-| *T_... / SD_...* | Touch & SD Card (Unused) | — | Disconnected | — |
+### 3.1. ST7789 TFT LCD Wiring (RPi 4B Hardware SPI4)
 
-### WS2812B LEDs -> Visualizer & Status
-*Optimization Tip: Daisy-chain the status LED and the Matrix to use only ONE GPIO pin.*
-**Data Path:** RPi GPIO 10 -> **Data IN** (Status LED) | **Data OUT** (Status LED) -> **Data IN** (8x8 Matrix).
+| TFT Module Pin | Function | RPi GPIO | Physical Pin # | Wire Color | Bus Assignment |
+| :---: | :--- | :---: | :---: | :---: | :--- |
+| **VCC** | 3.3V Power | 3V3 | **Pin 1** | **🔴 Red** | 3.3V Rail |
+| **GND** | System Ground | GND | **Pin 6** | **🟤 Brown** | System Ground |
+| **CS** | Chip Select | **GPIO 25** | **Pin 22** | **🟠 Orange** | SPI4 CS0 (`cs0_pin=25`) |
+| **RESET** | Display Reset | **GPIO 12** | **Pin 32** | **🟡 Yellow** | Direct GPIO |
+| **DC** | Data / Command | **GPIO 24** | **Pin 18** | **🟢 Green** | Direct GPIO |
+| **SDI (MOSI)** | Serial Data In | **GPIO 6** | **Pin 31** | **🔵 Blue** | SPI4 MOSI |
+| **SCK** | Serial Clock | **GPIO 7** | **Pin 26** | **🟣 Purple** | SPI4 SCLK *(moved from Pin 29)* |
+| **LED** | Backlight Control | **GPIO 20** | **Pin 38** | **⚪ Grey** | Active-High GPIO |
 
-| LED Pin | RPi Zero 2W Pin / Source | Purpose |
-|:---:|:---|:---|
-| 5V / VCC | 5V External Power Supply | **Do not power from Pi 5V pin!** See power notes below. |
-| GND | GND (Pin 39) + External PSU | Common ground is required. |
-| DIN | GPIO 10 (Pin 19) | SPI0 MOSI — drives WS2812 via SPI (avoids I2S/PWM conflict). |
+> **✦ Why SPI4 on RPi 4B?**
+> The Raspberry Pi 4B features additional hardware SPI controllers (SPI3 through SPI6). By using `dtoverlay=spi0-1cs`, SPI0's second chip-select (GPIO 7 / CE1) is released, allowing `dtoverlay=spi4-1cs,cs0_pin=25` to configure GPIO 6 (MOSI), GPIO 7 (SCLK), and GPIO 25 (CS0) as a 40 MHz DMA hardware controller. This eliminates CPU-bound bitbanging.
 
-### Media Control Joystick (5D Rocker Module)
-This module acts as 7 separate digital buttons. The COM pin is usually connected to GND, and the direction pins go to standard GPIOs. We configure the RPi GPIOs with internal Pull-Up resistors in software.
+### 3.2. 5D Rocker Joystick (Media Controls)
 
-*Assuming COM connects to GND (Active Low inputs):*
-| Rocker Pin | Function | RPi GPIO | Physical Pin # | Wire Color |
-|:---:|:---|:---|:---:|:---:|
-| **COM** | Common Ground | GND | Pin 14 | **Black** |
-| **UP** | Volume Up | GPIO 16 | Pin 36 | **White** |
-| **DOWN** | Volume Down | GPIO 17 | Pin 11 | **Grey** |
-| **LEFT** | Previous Track | GPIO 22 | Pin 15 | **Purple** |
-| **RIGHT** | Next Track | GPIO 23 | Pin 16 | **Blue** |
-| **MID (Press)** | Play / Pause | GPIO 26 | Pin 37 | **Green** |
-| **SET** | Cycle Display / Visualizer Modes | GPIO 27 | Pin 13 | **Yellow** |
-| **RST** | Toggle AirPlay ↔ BT (hold 1 s) | GPIO 4 | Pin 7 | **Orange** |
+All inputs configure active-low with internal pull-ups (`pull_up=True`):
 
-## 4. Crucial Power Distribution Note
-Do **NOT** power the 8x8 LED matrix directly from the Raspberry Pi's 5V pins. If the matrix lights up fully, it will pull too much current and burn out the Pi's power traces or cause instant reboots.
+| Rocker Pin | Function | RPi GPIO | Physical Pin # | Wire Color | Software Action |
+| :---: | :--- | :---: | :---: | :---: | :--- |
+| **COM** | Common Ground | GND | **Pin 14** | **⚫ Black** | Digital ground |
+| **UP** | Volume Up | **GPIO 16** | **Pin 36** | **⚪ White** | `SoftMaster` ALSA +5% |
+| **DOWN** | Volume Down | **GPIO 17** | **Pin 11** | **🔘 Grey** | `SoftMaster` ALSA -5% |
+| **LEFT** | Previous Track | **GPIO 22** | **Pin 15** | **🟣 Purple** | Shairport Sync Prev |
+| **RIGHT** | Next Track | **GPIO 23** | **Pin 16** | **🔵 Blue** | Shairport Sync Next |
+| **MID** | Play / Pause | **GPIO 26** | **Pin 37** | **🟢 Green** | Toggle Play / Pause |
+| **SET** | Cycle Display Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** | Info ↔ Art ↔ Visualizer |
+| **RST** | Toggle Mode | **GPIO 4** | **Pin 7** | **🟠 Orange** | AirPlay ↔ Bluetooth (1.0s hold) |
 
-**Correct Power Wiring:**
-1. Use a standard high-capacity 5V 4A or 5V 5A power supply.
-2. Split the 5V power line in parallel:
-   - One 5V branch goes to the Raspberry Pi to power it.
-   - The other 5V branch goes directly to the VCC of the LED matrix.
-3. Connect all Grounds together (Power Supply GND, Pi GND, Matrix GND) so the data signals have a common reference.
+### 3.3. WS2812B LEDs (8×8 Matrix & Status Indicator)
 
-## 5. Audio Routing Pipeline
+| LED Pin | Connection | RPi GPIO | Physical Pin # | Hardware Note |
+| :---: | :--- | :---: | :---: | :--- |
+| **5V / VCC** | External 5V PSU | — | — | **Do NOT draw from Pi 5V pin!** |
+| **GND** | PSU GND + Pi GND | GND | **Pin 39** | Common ground required |
+| **DIN** | SPI0 MOSI | **GPIO 10** | **Pin 19** | Avoids PWM/I2S DMA conflict |
+
+---
+
+## 4. ST7789 Display Pipeline & Color Calibration
+
+The direct hardware driver in `tft_display.py` interacts with the LCD controller via:
+
+1. **Hardware Reset:** Pull GPIO 12 LOW for 100ms, then HIGH for 120ms (`CMD_SWRESET = 0x01`, `CMD_SLPOUT = 0x11`).
+2. **Subpixel Mapping (RGB Mode):**
+   * ST7789 `MADCTL` register (`0x36`) bit 3 controls RGB vs BGR order.
+   * Calibrated with `MADCTL = 0x00` (or `0x08` bit 3 = 0), matching the physical IPS LCD subpixel stripe.
+3. **Display Inversion (INVOFF):**
+   * Many generic ST7789 panels have inverted IPS polarizers.
+   * Initialized with `INVOFF` (`0x20`) rather than `INVON` (`0x21`) to prevent washed-out, milky colors and negative contrast.
+4. **Color Mode:** 16-bit RGB565 (`CMD_COLMOD = 0x3A`, parameter `0x55`).
+
+---
+
+## 5. Timeline Synchronization & Seek Mechanics
+
+### 5.1. The AirPlay RTP Progress Metric
+AirPlay transmits timing via 32-bit unsigned RTP timestamps running at **44,100 Hz**:
+
+$$\text{prgr} = \text{start\_rtp} / \text{curr\_rtp} / \text{end\_rtp}$$
+
+* **Rollover Math:** Differences are calculated modulo $2^{32}$ (`& 0xFFFFFFFF`):
+  $$\text{dur\_frames} = (\text{end\_rtp} - \text{start\_rtp}) \ \& \ \text{0xFFFFFFFF}$$
+  $$\text{elapsed\_frames} = (\text{curr\_rtp} - \text{start\_rtp}) \ \& \ \text{0xFFFFFFFF}$$
+* **Jitter Guard:** If $(\text{curr\_rtp} - \text{start\_rtp}) > \text{0x7FFFFFFF}$, the difference represents pre-roll buffer jitter where the playhead is slightly ahead of the start frame. Clamped to 0.0s to avoid integer underflow jumping to 97,000 seconds.
+
+### 5.2. Stream Slice Reconciliation (Mid-Track Start & Scrubbing)
+When playback begins mid-track (e.g. at 1:15 of a 3:00 track) or the user scrubs on iOS:
+1. AirPlay emits a stream flush (`pfls`).
+2. The receiver preserves track metadata (`title`, `artist`, `art_img`) and wakes the D-Bus poller.
+3. AirPlay streams a slice where `duration` represents the *remaining* seconds ($105\text{s}$) rather than total duration ($180\text{s}$).
+4. The receiver correlates this against the authoritative duration from DAAP `astm` or D-Bus `mpris:length`:
+   $$\text{offset} = \text{total\_duration} - \text{duration}$$
+   $$\text{elapsed} = \text{offset} + \text{elapsed}$$
+5. The progress bar thumb instantly jumps to $75.0\text{s}$ ($41.7\%$) without resetting to zero.
+
+### 5.3. Real-Time Monotonic Interpolation
+Between discrete metadata packets (sent every 1.0s via `progress_interval = 1.0`), the snapshot engine advances elapsed time continuously using Python's high-resolution monotonic clock:
+
+$$\text{elapsed}(t) = \text{elapsed\_base} + (t_{\text{monotonic}} - t_{\text{update}})$$
+
+On pause (`paus` / `pend`), the monotonic accumulator is frozen instantly.
+
+---
+
+## 6. Audio Routing Pipeline
 
 ```
-shairport-sync (or bluealsa-aplay)
-     ↓  writes to
-hw:Loopback,0,0   (ALSA loopback, playback side)
-     ↕  kernel couples playback ↔ capture
-hw:Loopback,1,0   (ALSA loopback, capture side)
-     ↓  shared via dsnoop
-     ├── CAVA           → frequency analysis → LED matrix
-     └── alsaloop       → softvol → hw:DAC → speakers
+AirPlay (shairport-sync) / Bluetooth (bluealsa)
+       ↓ writes S16_LE 44100Hz stereo
+hw:Loopback,0,0 (ALSA Loopback Playback)
+       ↕ coupled internally by kernel
+hw:Loopback,1,0 (ALSA Loopback Capture)
+       ↓ shared via dsnoop (pcm.loopcapture)
+       ├── CAVA (FIFO /tmp/cava.fifo) → WS2812B 8×8 Matrix
+       └── alsaloop → pcm.softvol_out → 3.5mm Jack (bcm2835 Headphones)
 ```
-
-Both AirPlay and Bluetooth feed into the same loopback bus. Switching modes just swaps which source writes to `hw:Loopback,0,0`. The downstream pipeline stays running.

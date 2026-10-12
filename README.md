@@ -1,128 +1,192 @@
-# The AirPlay Device: Audio Receiver & Visualizer
+# Sandy's AirPlay Device — Audio Receiver, Visualizer & TFT Display
 
-A Raspberry Pi-based high-fidelity AirPlay / Bluetooth audio receiver, real-time audio visualizer, album art display, and hardware media controller.
+A production-grade Raspberry Pi audio receiver, dynamic ST7789 TFT display, real-time frequency visualizer, and hardware media controller.
 
-* **AirPlay Name:** `Sandy's Airplay Device`
-* **Hostname:** `sandy.local`
+* **AirPlay Service Name:** `Sandy's Airplay Device`
+* **Network Hostname:** `sandy.local`
 * **Default SSH Login:** `ssh sandypi@sandy.local`
 
 ---
 
 ## Hardware Platforms
 
-| Platform | Role | Audio Output | Status |
-| :--- | :--- | :--- | :--- |
-| **Raspberry Pi 4 Model B (1GB)** | **Current Prototype** | Onboard 3.5mm Headphone Jack (`bcm2835 Headphones`) | 🟢 Active & Running |
-| **Raspberry Pi Zero 2 W** | **Production Target** | PCM5102A I2S DAC (`hifiberry-dac` overlay) | 🟡 Target hardware |
+| Platform | Role | Audio Output | TFT SPI Controller | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Raspberry Pi 4 Model B (1GB)** | **Current Prototype** | 3.5mm Headphone Jack (`bcm2835 Headphones`) | **Hardware SPI4** (`/dev/spidev4.0` @ 32–40 MHz) | 🟢 Active & Fully Calibrated |
+| **Raspberry Pi Zero 2 W** | **Production Target** | PCM5102A I2S DAC (`hifiberry-dac` overlay) | Software SPI (`spi-gpio` Bus 1) | 🟡 Target hardware |
 
 The codebase and installation scripts auto-detect the board at runtime, preserving the I2S DAC pinout plan while allowing full prototyping via the Pi 4B's 3.5mm jack.
 
 ---
 
-## Features
+## Key Features & Architecture
 
-- **Seamless AirPlay Audio:** Streams bit-perfect audio via `shairport-sync` with dynamic metadata and album art extraction.
-- **ALSA Loopback Pipeline:** Simultaneously feeds line audio to the speakers and a `dsnoop` capture channel for analysis with zero lag.
-- **Real-Time LED Visualizer:** Driven by `cava` in FIFO mode, powering an 8x8 WS2812B LED matrix and status indicator over hardware SPI0 MOSI (GPIO 10) to avoid I2S/PWM audio resource conflicts.
-- **2.8" SPI TFT Display (ST7789, 240×320):** Displays album art, track details, animated clock, and visualizer modes via bitbanged software SPI (`spi-gpio`).
-- **5D Rocker Joystick Controller:** 7 hardware inputs for Volume, Track Skipping, Play/Pause, Visualizer Mode cycling, and AirPlay/Bluetooth toggling.
+### 1. High-Performance ST7789 TFT Display (240×320)
+* **Direct Hardware SPI4 Access:** Runs over Raspberry Pi 4B's dedicated hardware SPI controller 4 (`/dev/spidev4.0`) at 32 MHz with direct kernel DMA transfers, bypassing slow bit-banging and preventing GPIO resource contention.
+* **Calibrated Color Reproduction:**
+  * **RGB Subpixel Mapping:** Configured with `MADCTL` bit 3 = 0, ensuring exact color fidelity without Red/Blue swapping.
+  * **Non-Inverted Display (`INVOFF`):** Configured with `INVOFF` (`0x20`), eliminating washed-out contrast and negative color artifacts.
+* **Apple SF Pro Rounded Typography Engine:** Rendered with true Apple SF Pro Rounded Bold and SF Compact Rounded typefaces with horizontal ping-pong marquee scrolling and boundary clipping.
+* **3 Display Modes (Cycled via Joystick 'SET'):**
+  * **Mode 0 (Default):** Cover Art + Marquee Track Info + Apple-style Real-Time Progress Bar.
+  * **Mode 1:** Edge-to-Edge Full-Screen Album Art.
+  * **Mode 2:** Full-Screen Live Frequency Bar Spectrum Visualizer.
+* **Apple StandBy Idle Screen:** Shows status capsule pill (`AirPlay Ready`), large time, bold Day & Date, audio mode, and Wi-Fi connection indicator.
+
+### 2. Intelligent Real-Time Progress Bar & Scrubbing
+* **Apple Pill Scrubber:** 6px thick pill track with 8px margins, crisp iOS Blue progress fill, and a prominent white scrubber dot with blue rim.
+* **Real-Time Monotonic Interpolation:** Advances smoothly at 15 FPS between metadata packets, freezing accurately on pause.
+* **Seek & Mid-Track Position Tracking:**
+  * Accurately parses 32-bit unsigned RTP timestamps with epoch rollover and jitter guard (`raw_diff > 0x7FFFFFFF`).
+  * Reconciles remaining stream slices (`duration < total - 2.0`) against authoritative song duration (`astm` and D-Bus `mpris:length`) so starting a track mid-song or scrubbing on iOS immediately jumps to the exact timestamp.
+  * Preserves metadata across audio flushes (`pfls`), ensuring track title and artwork are never wiped during seeking.
+* **Zero-Latency D-Bus Polling:** Synchronizes with `org.gnome.ShairportSync.RemoteControl.ProgressString` and `org.mpris.MediaPlayer2.Player.Metadata` instantly via `_dbus_wake_event`.
+
+### 3. Bit-Perfect Audio & Visualizer Pipeline
+* **Shairport Sync (AirPlay):** Bit-perfect AirPlay streaming with metadata pipe (`/tmp/shairport-sync-metadata`), cover art caching (`/tmp/shairport-sync-art`), and 1.0s periodic timeline updates.
+* **ALSA Loopback Routing:** Couples audio playback to line output while feeding a zero-lag `dsnoop` capture channel.
+* **LED Visualizer (CAVA):** Frequency analysis pipeline powering an 8×8 WS2812B matrix and status indicator over hardware SPI0 MOSI (GPIO 10) to avoid I2S/PWM DMA conflicts.
 
 ---
 
 ## Hardware Wiring Reference
 
-Both the Raspberry Pi 4B and Raspberry Pi Zero 2W share the identical 40-pin GPIO header.
+Both the Raspberry Pi 4B and Raspberry Pi Zero 2W share the 40-pin GPIO header.
 
-### 1. Cable Set 1: 2.8" ST7789 TFT Display (240×320)
+### 1. ST7789 TFT Display (2.8" 240×320) — Hardware SPI4 (RPi 4B)
 
-| TFT Module Pin | Function | RPi GPIO | Physical Pin # | Wire Color |
-| :--- | :--- | :--- | :---: | :---: |
-| **VCC** | 3.3V Power *(or 5V if module has onboard LDO)* | 3V3 | **Pin 1** | **🔴 Red** |
-| **GND** | Ground | GND | **Pin 6** | **🟤 Brown** |
-| **CS** | Chip Select (Bus 1) | **GPIO 25** | **Pin 22** | **🟠 Orange** |
-| **RESET** | Hardware Reset | **GPIO 12** | **Pin 32** | **🟡 Yellow** |
-| **DC** | Data / Command | **GPIO 24** | **Pin 18** | **🟢 Green** |
-| **SDI (MOSI)** | Serial Data In | **GPIO 6** | **Pin 31** | **🔵 Blue** |
-| **SCK** | Serial Clock | **GPIO 5** | **Pin 29** | **🟣 Purple** |
-| **LED** | Backlight Control | **GPIO 20** | **Pin 38** | **⚪ Grey** |
-| *SDO (MISO)* | Display Read | — | *Unused* | — |
-| *T_... / SD_...* | Touch & SD Card Pins | — | *Unused* | — |
+| TFT Pin | Function | RPi GPIO | Physical Pin # | Wire Color | Notes |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| **VCC** | Power | 3V3 | **Pin 1** | **🔴 Red** | 3.3V Logic |
+| **GND** | Ground | GND | **Pin 6** | **🟤 Brown** | System ground |
+| **CS** | Chip Select | **GPIO 25** | **Pin 22** | **🟠 Orange** | SPI4 CS0 |
+| **RESET** | Hardware Reset | **GPIO 12** | **Pin 32** | **🟡 Yellow** | Direct GPIO control |
+| **DC** | Data / Command | **GPIO 24** | **Pin 18** | **🟢 Green** | Direct GPIO control |
+| **SDI (MOSI)**| Serial Data In | **GPIO 6** | **Pin 31** | **🔵 Blue** | SPI4 MOSI |
+| **SCK** | Serial Clock | **GPIO 7** | **Pin 26** | **🟣 Purple** | SPI4 SCLK *(moved from Pin 29)* |
+| **LED** | Backlight Control | **GPIO 20** | **Pin 38** | **⚪ Grey** | Active-high |
+| *SDO / Touch* | Unused | — | — | — | Leave disconnected |
 
-### 2. Cable Set 2: 5D Rocker Joystick (Media Controls)
+> **✦ Note on SPI4 SCLK (Pin 26 / GPIO 7):**
+> On Raspberry Pi 4B, `dtoverlay=spi0-1cs` restricts SPI0 to CS0 (GPIO 8), freeing GPIO 7 (CE1) so that `dtoverlay=spi4-1cs,cs0_pin=25` claims GPIO 7 as the hardware SCLK line. This provides 32–40 MHz hardware DMA.
 
-| Rocker Pin | Function | RPi GPIO | Physical Pin # | Wire Color |
-| :--- | :--- | :--- | :---: | :---: |
-| **COM** | Common Ground | GND | **Pin 14** | **⚫ Black** |
-| **UP** | Volume Up | **GPIO 16** | **Pin 36** | **⚪ White** |
-| **DOWN** | Volume Down | **GPIO 17** | **Pin 11** | **🔘 Grey** |
-| **LEFT** | Previous Track | **GPIO 22** | **Pin 15** | **🟣 Purple** |
-| **RIGHT** | Next Track | **GPIO 23** | **Pin 16** | **🔵 Blue** |
-| **MID (Press)** | Play / Pause | **GPIO 26** | **Pin 37** | **🟢 Green** |
-| **SET** | Cycle Display Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** |
-| **RST** | Toggle AirPlay ↔ BT (hold 1s) | **GPIO 4** | **Pin 7** | **🟠 Orange** |
+### 2. 5D Rocker Joystick (Media & Mode Controls)
+
+| Rocker Pin | Function | RPi GPIO | Physical Pin # | Wire Color | Default Action |
+| :--- | :--- | :--- | :---: | :---: | :--- |
+| **COM** | Common Ground | GND | **Pin 14** | **⚫ Black** | Shared ground |
+| **UP** | Volume Up | **GPIO 16** | **Pin 36** | **⚪ White** | Increases ALSA volume |
+| **DOWN** | Volume Down | **GPIO 17** | **Pin 11** | **🔘 Grey** | Decreases ALSA volume |
+| **LEFT** | Previous Track | **GPIO 22** | **Pin 15** | **🟣 Purple** | AirPlay Prev Track |
+| **RIGHT** | Next Track | **GPIO 23** | **Pin 16** | **🔵 Blue** | AirPlay Next Track |
+| **MID** | Play / Pause | **GPIO 26** | **Pin 37** | **🟢 Green** | Toggle Play / Pause |
+| **SET** | Cycle Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** | Info → Art → Visualizer |
+| **RST** | Toggle AirPlay/BT | **GPIO 4** | **Pin 7** | **🟠 Orange** | Long-press (1.0s) |
 
 ### 3. WS2812B LEDs (Matrix & Status)
 
 | LED Pin | Connection | RPi GPIO | Physical Pin # | Notes |
 | :--- | :--- | :--- | :---: | :--- |
-| **5V / VCC** | External 5V Power Supply | — | — | **Do NOT power from Pi 5V pin!** |
-| **GND** | Common Ground | GND | **Pin 39** | Must share ground with Pi |
-| **DIN** | SPI0 MOSI | **GPIO 10** | **Pin 19** | Avoids PWM conflict |
-
-### 4. Audio Output
-* **Pi 4B Prototype:** Plug standard 3.5mm AUX audio cable directly into the onboard 3.5mm headphone jack.
-* **Pi Zero 2 W Target:** PCM5102A DAC connected to GPIO 18 (BCK), GPIO 19 (LCK), GPIO 21 (DIN).
+| **5V / VCC** | External 5V PSU | — | — | **Do NOT power from Pi 5V pin!** |
+| **GND** | Common Ground | GND | **Pin 39** | Common ground with Pi |
+| **DIN** | SPI0 MOSI | **GPIO 10** | **Pin 19** | Avoids PWM/I2S DMA conflict |
 
 ---
 
-## Audio Routing Pipeline
+## Audio Pipeline
 
 ```text
-AirPlay / Bluetooth
+AirPlay (shairport-sync) / Bluetooth (bluealsa)
        ↓
 hw:Loopback,0,0 (ALSA Loopback Playback)
        ↕ (kernel coupled)
 hw:Loopback,1,0 (ALSA Loopback Capture)
-       ├─→ alsaloop → softvol_out → (RPi 3.5mm Jack OR PCM5102A DAC)
-       └─→ CAVA (FIFO /tmp/cava.fifo) → LED Matrix Visualizer
+       ├─→ alsaloop → softvol_out → 3.5mm Headphone Jack (or PCM5102A DAC)
+       └─→ CAVA (FIFO /tmp/cava.fifo) → WS2812B LED Matrix
 ```
 
 ---
 
 ## Installation & Setup
 
-1. **Clone the repository on the Pi:**
-   ```bash
-   git clone https://github.com/Sandeep271958/The_Airplay_Device.git ~/Airplaydevice
-   cd ~/Airplaydevice
-   ```
+### 1. Clone & Install
+```bash
+git clone https://github.com/Sandeep271958/The_Airplay_Device.git ~/Airplaydevice
+cd ~/Airplaydevice
+bash install.sh
+```
 
-2. **Run the installer:**
-   ```bash
-   bash install.sh
-   ```
-   *The installer automatically detects whether you are on a Pi 4B or Pi Zero 2W and installs the corresponding ALSA and boot configurations.*
+### 2. Boot Configuration (`/boot/firmware/config.txt`)
+Ensure the following overlays are enabled in `/boot/firmware/config.txt`:
 
-3. **Configure `/boot/firmware/config.txt`:**
-   For Pi 4B prototype, ensure the following lines are in `/boot/firmware/config.txt`:
-   ```ini
-   dtparam=audio=on
-   # dtoverlay=hifiberry-dac
-   dtparam=spi=on
-   dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1
-   hdmi_ignore_edid_audio=1
-   ```
+```ini
+# Audio configuration
+dtparam=audio=on
+hdmi_ignore_edid_audio=1
 
-4. **Reboot:**
-   ```bash
-   sudo reboot
-   ```
+# Enable hardware SPI
+dtparam=spi=on
+
+# Restrict SPI0 to 1 CS (GPIO 8) — frees GPIO 7 for SPI4 SCLK
+dtoverlay=spi0-1cs
+
+# Enable Hardware SPI4 for ST7789 TFT Display (32 MHz DMA)
+dtoverlay=spi4-1cs,cs0_pin=25
+```
+
+### 3. Reboot
+```bash
+sudo reboot
+```
 
 ---
 
-## System Services & Management
+## Verification & Automated Test Suite
 
-All components run as systemd services:
+A comprehensive automated test suite validates all 10 core subsystems:
+
+```bash
+cd ~/Airplaydevice
+sudo venv/bin/python test_suite.py
+```
+
+### Test Suite Modules (32 Passing Tests):
+1. **System Environment & Daemons:** Checks root permissions and active systemd units (`shairport-sync`, `airplaydevice`, `avahi-daemon`).
+2. **Audio & ALSA Subsystem:** Validates `snd-aloop`, 3.5mm DAC device, and `SoftMaster` mixer.
+3. **CAVA Audio FIFO:** Validates `/tmp/cava_fifo` node and permissions.
+4. **Shairport Sync D-Bus:** Queries `org.gnome.ShairportSync` and `org.mpris.MediaPlayer2`.
+5. **Metadata & Album Art:** Tests basic fields, JPEG decoding, stale cache clearing, `on_track_change()` reset, and chunked assembly (`pcst` → `PICT` → `pcen`).
+6. **Progress Bar & Timeline Engine:**
+   * 32-bit uint32 RTP timestamp rollover handling.
+   * Monotonic 15 FPS real-time clock interpolation.
+   * Pause clock freeze accuracy.
+   * High-visibility Apple pill track & scrubber thumb rendering.
+   * Mid-track start & seek offset calculation (`offset = total - duration`).
+   * Stream flush (`pfls`) metadata and progress preservation.
+   * DAAP total song duration (`astm`) 4-byte big-endian parsing.
+7. **Typography Assets:** Verifies SF Pro Rounded Bold, SF Compact Rounded, and logo assets.
+8. **Marquee Engine:** Checks ping-pong scrolling offsets, pause intervals, and boundary clamping.
+9. **TFT Hardware & Calibration:** Verifies `/dev/spidev4.0`, RGB subpixel mode (`MADCTL`), and non-inverted colors (`INVOFF`).
+10. **5D Rocker Joystick:** Validates GPIO claim and pull-up resistor health across all 5 control lines.
+
+### Standalone Display Calibration Tool
+To inspect or re-calibrate the physical ST7789 display independently:
+```bash
+# Calibrated production mode (RGB + INVOFF):
+sudo venv/bin/python test_tft.py
+
+# Diagnostic switches:
+sudo venv/bin/python test_tft.py --rgb     # Force RGB subpixel ordering
+sudo venv/bin/python test_tft.py --bgr     # Force BGR subpixel ordering
+sudo venv/bin/python test_tft.py --invoff  # Force Inversion OFF
+sudo venv/bin/python test_tft.py --invon   # Force Inversion ON
+```
+
+---
+
+## Service Management
+
+All components are managed via systemd:
 
 ```bash
 # Check service status
@@ -130,6 +194,10 @@ sudo systemctl status shairport-sync
 sudo systemctl status alsaloop
 sudo systemctl status airplaydevice
 
-# View live application logs
+# Restart after changes
+sudo systemctl restart shairport-sync
+sudo systemctl restart airplaydevice
+
+# View real-time logs
 sudo journalctl -u airplaydevice -f
 ```
