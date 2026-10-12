@@ -45,11 +45,11 @@ except Exception as e:
 # 3. Test Display Initialization & Drawing
 print(f"\n[3/3] Testing ST7789 Display Driver...")
 
-# Try port 4 first (RPi 4B hardware SPI4), then port 1, then port 0
+# Try port 4 first (RPi 4B hardware SPI4), then port 1
 target_port = None
 target_cs = 0
 
-for p in [4, 1, 0]:
+for p in [4, 1]:
     if os.path.exists(f"/dev/spidev{p}.0"):
         target_port = p
         target_cs = 0
@@ -60,12 +60,13 @@ for p in [4, 1, 0]:
         break
 
 if target_port is None:
-    print("      ✗ Cannot test display render: No /dev/spidev device available.")
+    print("      ✗ /dev/spidev4.0 not found yet!")
     print("\n  TO FIX:")
     print("  1. In /boot/firmware/config.txt, add:")
     print("         dtoverlay=spi4-1cs,cs0_pin=25")
-    print("  2. Move the purple SCK wire from Pin 29 to Pin 26 (GPIO 7).")
-    print("  3. Reboot: sudo reboot")
+    print("  2. Ensure the purple SCK wire is on Pin 26 (GPIO 7).")
+    print("  3. Save the file and reboot: sudo reboot")
+    print("\n" + "=" * 60)
     sys.exit(1)
 
 try:

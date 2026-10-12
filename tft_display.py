@@ -382,7 +382,7 @@ class ST7789Backend(DisplayBackend):
 
             if not os.path.exists(f"/dev/spidev{port}.{cs}"):
                 found = False
-                for p in [4, 1, 0]:
+                for p in [4, 1]:
                     if os.path.exists(f"/dev/spidev{p}.{cs}"):
                         port = p
                         found = True
@@ -393,10 +393,13 @@ class ST7789Backend(DisplayBackend):
                         found = True
                         break
                 if not found:
-                    print(f"[TFT] WARNING: Device '/dev/spidev{self._spi_port}.{self._spi_cs}' not found!")
+                    print(f"[TFT] WARNING: Dedicated SPI device for TFT (/dev/spidev4.0 or /dev/spidev1.0) not found!")
                     print("      ✦ On RPi 4B, add this line to /boot/firmware/config.txt:")
                     print("            dtoverlay=spi4-1cs,cs0_pin=25")
                     print("      ✦ Move the purple SCK wire to Pin 26 (GPIO 7).")
+                    print("      ✦ Reboot the Pi with: sudo reboot")
+                    self._display = "STUB"
+                    return
 
             print(f"[TFT] Connecting to ST7789 via /dev/spidev{port}.{cs} (DC={self._dc_pin}, RST={self._rst_pin}, BL={self._bl_pin})...")
             self._display = st7789_lib.ST7789(
