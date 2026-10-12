@@ -91,7 +91,7 @@ else
 fi
 
 # Shairport-Sync (AirPlay receiver) — patch hook paths to actual install dir
-sed "s|/home/pi/Airplaydevice|$INSTALL_DIR|g" \
+sed -E "s|/home/(pi|sandypi)/Airplaydevice|$INSTALL_DIR|g" \
     "$INSTALL_DIR/shairport-sync.conf" | sudo tee /etc/shairport-sync.conf > /dev/null
 echo "       → /etc/shairport-sync.conf (paths patched)"
 
@@ -106,10 +106,10 @@ echo ""
 echo "[9/9] Installing systemd services..."
 
 # Patch the service files with the actual install directory
-sed "s|/home/pi/Airplaydevice|$INSTALL_DIR|g" \
+sed -E "s|/home/(pi|sandypi)/Airplaydevice|$INSTALL_DIR|g" \
     "$INSTALL_DIR/airplaydevice.service" | sudo tee /etc/systemd/system/airplaydevice.service > /dev/null
 
-sed "s|/home/pi/Airplaydevice|$INSTALL_DIR|g" \
+sed -E "s|/home/(pi|sandypi)/Airplaydevice|$INSTALL_DIR|g" \
     "$INSTALL_DIR/alsaloop.service" | sudo tee /etc/systemd/system/alsaloop.service > /dev/null
 
 sudo systemctl daemon-reload

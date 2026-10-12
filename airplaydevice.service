@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/home/pi/Airplaydevice/venv/bin/python /home/pi/Airplaydevice/main.py
-WorkingDirectory=/home/pi/Airplaydevice
+ExecStart=/home/sandypi/Airplaydevice/venv/bin/python /home/sandypi/Airplaydevice/main.py
+WorkingDirectory=/home/sandypi/Airplaydevice
 Restart=on-failure
 RestartSec=5
 # Root is required for SPI (WS2812) and GPIO access
