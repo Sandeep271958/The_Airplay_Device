@@ -117,7 +117,36 @@ Between discrete metadata packets (sent every 1.0s via `progress_interval = 1.0`
 
 $$\text{elapsed}(t) = \text{elapsed\_base} + (t_{\text{monotonic}} - t_{\text{update}})$$
 
-On pause (`paus` / `pend`), the monotonic accumulator is frozen instantly.
+On pause (`paus` / `pend`), the monotonic accumulator is frozen instantly without drift.
+
+### 5.4. D-Bus Packet Deduplication & Polling Protection
+Shairport Sync exposes `ProgressString` over D-Bus as `start_rtp / curr_rtp / end_rtp`. Crucially, AirPlay transmits static timestamp snapshots rather than second-by-second updates. Querying D-Bus at 1.0s cadence would repeatedly re-anchor $\text{elapsed\_base} = 0.0$ and reset $t_{\text{update}} = t_{\text{monotonic}}$, locking the progress bar to 0%.
+
+To solve this:
+1. `_process_prgr_string()` compares incoming payload strings against `_last_prgr_string`.
+2. Identical duplicate packets are discarded immediately, allowing $t_{\text{monotonic}}$ to interpolate smoothly.
+3. The deduplication anchor `_last_prgr_string` is dynamically cleared on:
+   * Stream flush (`pfls`) — emitted when seeking or skipping.
+   * New track title (`minm` / `xesam:title`).
+   * Explicit track change (`on_track_change()` / `clear()`).
+
+### 5.5. Scrubber Thumb Indicator & Boundary Clamp Math
+The progress bar renders a 6px pill background (`PROGRESS_BG = (228, 232, 240)`) with an Apple-style white scrubber thumb (`dot_r = 5px`) and iOS Blue rim (`PROGRESS_FG = (0, 122, 255)`).
+
+The thumb position is mathematically clamped within track boundaries to ensure seamless visual rendering at both track start ($0\%$) and track end ($100\%$):
+
+$$\text{dot\_cx} = \text{clamp}\Big(x + \text{radius}, \ x + \text{int}(w \cdot \text{frac}), \ x + w - \text{radius}\Big)$$
+
+For display width $240\text{px}$, bar origin $x=8$, width $w=224$, and corner radius $=3$:
+* At $0\%$ ($0\text{s}$ elapsed): $\text{dot\_cx} = 8 + 3 = 11\text{px}$.
+* At $50\%$ (mid-track): $\text{dot\_cx} = 8 + 112 = 120\text{px}$.
+* At $100\%$ (track end): $\text{dot\_cx} = 8 + 224 - 3 = 229\text{px}$.
+
+### 5.6. Playback State Harmonization Engine
+The multi-threaded architecture harmonizes playback state between ALSA Loopback audio energy, D-Bus MPRIS status, Shairport Sync session hooks, and the TFT metadata reader:
+* **Explicit Pause:** When `dbus_status == "paused"`, `is_playing` evaluates immediately to `False`, halting monotonic clock advancement.
+* **Active Playback:** When `dbus_status == "playing"`, CAVA audio energy $> 10$, or session hook file reports `playing`, `is_playing = True`.
+* **Quiet Intro Guard:** When audio energy is low during quiet intro passages, active metadata (`track_meta.is_playing`) maintains playback state without flapping or freezing.
 
 ---
 

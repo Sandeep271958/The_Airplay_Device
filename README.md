@@ -34,8 +34,11 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
 * **Apple StandBy Idle Screen:** Shows status capsule pill (`AirPlay Ready`), large time, bold Day & Date, audio mode, and Wi-Fi connection indicator.
 
 ### 2. Intelligent Real-Time Progress Bar & Scrubbing
-* **Apple Pill Scrubber:** 6px thick pill track with 8px margins, crisp iOS Blue progress fill, and a prominent white scrubber dot with blue rim.
-* **Real-Time Monotonic Interpolation:** Advances smoothly at 15 FPS between metadata packets, freezing accurately on pause.
+* **Intelligent D-Bus Packet Deduplication:** Shairport Sync provides static RTP timestamp snapshots at track start and seek points. Incoming `prgr` strings are dynamically deduplicated against `_last_prgr_string`, preventing periodic 1.0s D-Bus poller queries from clobbering the live monotonic clock back to 0.0s.
+* **Dynamic Cache Invalidation:** `_last_prgr_string` is automatically flushed upon stream flush (`pfls`), new track title (`minm`), or explicit skip (`on_track_change()`), ensuring seeks and track changes apply immediately.
+* **Apple Pill Scrubber & Dynamic Thumb Indicator:** 6px thick pill track with 8px margins, crisp iOS Blue fill, and a prominent 10px white scrubber thumb with blue rim that is visible and mathematically clamped across the full duration from 0:00 (0%) to song end (100%).
+* **Real-Time Monotonic Interpolation:** Advances smoothly at 15 FPS between metadata packets, freezing accurately on pause and resuming seamlessly without time drift.
+* **Harmonized Playback State Engine:** Prioritizes explicit D-Bus pause detection (`dbus_status == "paused"`) while keeping playback active during quiet track intros or CAVA startup, eliminating progress bar freezes or flapping.
 * **Seek & Mid-Track Position Tracking:**
   * Accurately parses 32-bit unsigned RTP timestamps with epoch rollover and jitter guard (`raw_diff > 0x7FFFFFFF`).
   * Reconciles remaining stream slices (`duration < total - 2.0`) against authoritative song duration (`astm` and D-Bus `mpris:length`) so starting a track mid-song or scrubbing on iOS immediately jumps to the exact timestamp.
@@ -150,7 +153,7 @@ cd ~/Airplaydevice
 sudo venv/bin/python test_suite.py
 ```
 
-### Test Suite Modules (32 Passing Tests):
+### Test Suite Modules (36 Passing Tests — 100% Pass Rate):
 1. **System Environment & Daemons:** Checks root permissions and active systemd units (`shairport-sync`, `airplaydevice`, `avahi-daemon`).
 2. **Audio & ALSA Subsystem:** Validates `snd-aloop`, 3.5mm DAC device, and `SoftMaster` mixer.
 3. **CAVA Audio FIFO:** Validates `/tmp/cava_fifo` node and permissions.
@@ -158,12 +161,16 @@ sudo venv/bin/python test_suite.py
 5. **Metadata & Album Art:** Tests basic fields, JPEG decoding, stale cache clearing, `on_track_change()` reset, and chunked assembly (`pcst` → `PICT` → `pcen`).
 6. **Progress Bar & Timeline Engine:**
    * 32-bit uint32 RTP timestamp rollover handling.
-   * Monotonic 15 FPS real-time clock interpolation.
-   * Pause clock freeze accuracy.
+   * Monotonic 15 FPS real-time clock interpolation (`now - update_time`).
+   * Pause clock freeze accuracy (verifies 0.000s drift).
    * High-visibility Apple pill track & scrubber thumb rendering.
    * Mid-track start & seek offset calculation (`offset = total - duration`).
    * Stream flush (`pfls`) metadata and progress preservation.
    * DAAP total song duration (`astm`) 4-byte big-endian parsing.
+   * Repeated identical `prgr` packet deduplication (prevents D-Bus clock resets).
+   * 10-packet burst storm resilience.
+   * Bi-directional seek & scrub geometry (forward to 140s, backward to 30s).
+   * Scrubber thumb boundary clamp math at 0%, 50%, and 100%.
 7. **Typography Assets:** Verifies SF Pro Rounded Bold, SF Compact Rounded, and logo assets.
 8. **Marquee Engine:** Checks ping-pong scrolling offsets, pause intervals, and boundary clamping.
 9. **TFT Hardware & Calibration:** Verifies `/dev/spidev4.0`, RGB subpixel mode (`MADCTL`), and non-inverted colors (`INVOFF`).
