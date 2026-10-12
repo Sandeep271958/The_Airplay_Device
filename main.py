@@ -42,7 +42,7 @@ import rpi_ws281x as ws
 
 # TFT Display controller (safe to import even without hardware — uses stub backend)
 try:
-    from tft_display import display_controller, start_display_threads
+    from tft_display import display_controller, start_display_threads, track_meta
     TFT_AVAILABLE = True
 except ImportError:
     TFT_AVAILABLE = False

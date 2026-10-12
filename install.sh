@@ -7,6 +7,19 @@ set -euo pipefail
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# --- Detect Raspberry Pi model ---
+PI_MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "Unknown")
+echo "  Detected: $PI_MODEL"
+
+# Check if this is a RPi 4B (prototype mode — uses onboard headphone jack)
+if echo "$PI_MODEL" | grep -qi "Raspberry Pi 4"; then
+    IS_RPI4B=true
+    echo "  → Using RPi 4B prototype config (onboard 3.5mm audio)"
+else
+    IS_RPI4B=false
+    echo "  → Using production config (I2S DAC audio)"
+fi
+
 echo "======================================================="
 echo "  AirPlay / Bluetooth Audio Receiver — Setup"
 echo "======================================================="
@@ -60,13 +73,22 @@ if ! grep -q "^snd-aloop" /etc/modules 2>/dev/null; then
 fi
 sudo modprobe snd-aloop 2>/dev/null || true
 
+# --- Auto-enable SPI via raspi-config ---
+echo "       Enabling hardware SPI..."
+sudo raspi-config nonint do_spi 0 2>/dev/null || true
+
 # --- 7. Configuration files ---
 echo ""
 echo "[7/9] Installing configuration files..."
 
 # ALSA routing (loopback tee + softvol)
-sudo cp "$INSTALL_DIR/asound.conf" /etc/asound.conf
-echo "       → /etc/asound.conf"
+if [ "$IS_RPI4B" = true ]; then
+    sudo cp "$INSTALL_DIR/asound_rpi4b.conf" /etc/asound.conf
+    echo "       → /etc/asound.conf (RPi 4B — headphone jack output)"
+else
+    sudo cp "$INSTALL_DIR/asound.conf" /etc/asound.conf
+    echo "       → /etc/asound.conf (I2S DAC output)"
+fi
 
 # Shairport-Sync (AirPlay receiver) — patch hook paths to actual install dir
 sed "s|/home/pi/Airplaydevice|$INSTALL_DIR|g" \
@@ -112,7 +134,11 @@ echo "     sudo raspi-config → Interface Options → SPI → Enable"
 echo ""
 echo "  2. Edit /boot/firmware/config.txt — add these lines:"
 echo "     ─────────────────────────────────────────"
-cat "$INSTALL_DIR/boot_config.txt"
+if [ "$IS_RPI4B" = true ]; then
+    cat "$INSTALL_DIR/boot_config_rpi4b.txt"
+else
+    cat "$INSTALL_DIR/boot_config.txt"
+fi
 echo "     ─────────────────────────────────────────"
 echo ""
 echo "  3. Reboot:"

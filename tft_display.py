@@ -377,11 +377,11 @@ class ST7789Backend(DisplayBackend):
         try:
             import st7789 as st7789_lib
             self._display = st7789_lib.ST7789(
-                port=self._spi_port or 0,
-                cs=self._spi_cs or 0,
-                dc=self._dc_pin or 24,
-                rst=self._rst_pin or 25,
-                backlight=self._bl_pin or 13,
+                port=self._spi_port,
+                cs=self._spi_cs,
+                dc=self._dc_pin,
+                rst=self._rst_pin,
+                backlight=self._bl_pin,
                 width=self.width,
                 height=self.height,
                 rotation=0,
