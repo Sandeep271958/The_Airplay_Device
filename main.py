@@ -428,11 +428,14 @@ def state_monitor_thread():
                 # 4. Metadata activity
                 meta_active = track_meta.has_meta() if TFT_AVAILABLE else False
 
-                is_playing = (
-                    audio_flowing
-                    or dbus_status == "playing"
-                    or file_status == "playing"
-                )
+                if dbus_status == "paused":
+                    is_playing = False
+                elif audio_flowing or dbus_status == "playing" or file_status == "playing":
+                    is_playing = True
+                elif TFT_AVAILABLE and track_meta.is_playing:
+                    is_playing = True
+                else:
+                    is_playing = False
 
                 is_connected = (
                     is_playing

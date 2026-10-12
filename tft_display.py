@@ -243,6 +243,8 @@ class TrackMeta:
 
     def on_track_change(self):
         """Immediately clear previous track metadata and progress on track skip."""
+        global _last_prgr_string
+        _last_prgr_string = ""
         with self._lock:
             self.title   = ""
             self.artist  = ""
@@ -258,6 +260,8 @@ class TrackMeta:
         with self._lock:
             if key == "title":
                 if value and value != self.title:
+                    global _last_prgr_string
+                    _last_prgr_string = ""
                     self.title = value
                     # Invalidate old album art when a new track title arrives
                     self.art_img = None
@@ -393,6 +397,8 @@ class TrackMeta:
             }
 
     def clear(self):
+        global _last_prgr_string
+        _last_prgr_string = ""
         with self._lock:
             self.title   = ""
             self.artist  = ""
@@ -420,13 +426,27 @@ def _trigger_dbus_sync():
     _dbus_wake_event.set()
 
 
+_last_prgr_string = ""
+
 def _process_prgr_string(s):
     """
     Parse a 3-part progress string (start/current/end RTP timestamps).
     Handles signed deltas, uint32 rollovers, and offsets accurately.
+    Deduplicates identical packets to prevent clobbering live monotonic interpolation.
     """
+    global _last_prgr_string
     try:
-        parts = s.strip().split("/")
+        raw_s = str(s).strip()
+        if not raw_s or "/" not in raw_s:
+            return
+
+        # Deduplication: If the packet is identical to the last one processed,
+        # ignore it so we don't reset the live monotonic playback clock back to the starting anchor!
+        if raw_s == _last_prgr_string:
+            return
+        _last_prgr_string = raw_s
+
+        parts = raw_s.split("/")
         if len(parts) == 3:
             start_rtp = int(parts[0])
             curr_rtp  = int(parts[1])
@@ -446,7 +466,8 @@ def _process_prgr_string(s):
 
             if 1.0 <= dur_sec <= 43200.0:
                 elapsed_sec = max(0.0, min(dur_sec, elapsed_sec))
-                track_meta.set_progress(elapsed_sec, dur_sec, is_playing=display_controller.is_playing)
+                track_meta.set_progress(elapsed_sec, dur_sec, is_playing=True)
+                display_controller.set_playing(True)
                 print(f"[TFT-META] Progress sync: {elapsed_sec:.1f}s / {dur_sec:.1f}s ({(elapsed_sec/dur_sec)*100:.1f}%)")
     except Exception as e:
         print(f"[TFT-META] Progress parse error: {e}")
@@ -609,6 +630,8 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
             track_meta.set_playing_state(False)
         elif code_ascii == "pfls":
             # Stream flushed (seek / pause / track change) — discard in-flight art buffer & wake poller
+            global _last_prgr_string
+            _last_prgr_string = ""
             print("[TFT-META] Stream flushed (pfls)")
             _in_picture_stream = False
             _art_chunks.clear()
@@ -1183,12 +1206,13 @@ class DisplayRenderer:
         draw.rounded_rectangle([x, y, x + w, y + h], radius=radius,
                                fill=PROGRESS_BG, outline=(210, 216, 230), width=1)
 
-        # 2. Active progress fill (bright iOS Blue)
-        if duration > 0.0 and frac > 0.0:
-            fill_w = int(w * frac)
-            fill_w = max(radius * 2, min(w, fill_w))
-            draw.rounded_rectangle([x, y, x + fill_w, y + h], radius=radius,
-                                   fill=PROGRESS_FG)
+        # 2. Active progress fill (bright iOS Blue) & Scrubber Thumb Indicator
+        if duration > 0.0:
+            if frac > 0.0:
+                fill_w = int(w * frac)
+                fill_w = max(radius * 2, min(w, fill_w))
+                draw.rounded_rectangle([x, y, x + fill_w, y + h], radius=radius,
+                                       fill=PROGRESS_FG)
 
             # 3. Modern Apple scrubber head thumb indicator at current playback point
             dot_cx = x + int(w * frac)

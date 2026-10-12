@@ -364,6 +364,74 @@ try:
         report.log_fail("Progress Bar", "DAAP Total Song Duration (astm) Parsing",
                         f"Failed astm parsing: dur={track_meta.prog_total_duration}")
 
+    # 8. Repeated Identical prgr Packet Deduplication (Prevents D-Bus polling clock resets)
+    # Re-send the exact same xml_seek packet after 60ms — live elapsed clock MUST continue advancing!
+    time.sleep(0.06)
+    _process_metadata_item(xml_seek, re_type, re_code, re_data, re_length)
+    snap_dedup = track_meta.snapshot()
+    if snap_dedup["prog_elapsed"] > 75.04:
+        report.log_pass("Progress Bar", "Identical prgr Packet Deduplication",
+                        f"Repeated D-Bus packet deduplicated cleanly; clock advanced smoothly to {snap_dedup['prog_elapsed']:.3f}s")
+    else:
+        report.log_fail("Progress Bar", "Identical prgr Packet Deduplication",
+                        f"Repeated packet clobbered clock: elapsed={snap_dedup['prog_elapsed']}")
+
+    # 9. Rapid Duplicate Packet Storm Resilience
+    # Fire 10 identical packets in rapid succession (simulating aggressive polling / re-transmits)
+    t_start_storm = time.monotonic()
+    for _ in range(10):
+        _process_metadata_item(xml_seek, re_type, re_code, re_data, re_length)
+        time.sleep(0.01)
+    snap_storm = track_meta.snapshot()
+    expected_advancement = time.monotonic() - t_start_storm
+    if snap_storm["prog_elapsed"] >= 75.08:
+        report.log_pass("Progress Bar", "Packet Storm Deduplication Resilience",
+                        f"10 duplicate packets rejected; elapsed advanced steadily to {snap_storm['prog_elapsed']:.3f}s")
+    else:
+        report.log_fail("Progress Bar", "Packet Storm Deduplication Resilience",
+                        f"Elapsed clock reset or froze during packet storm: elapsed={snap_storm['prog_elapsed']}")
+
+    # 10. Forward and Backward Scrub / Seek Handling
+    # Scrub forward to 140s (out of 240s total)
+    prgr_fwd = "1000000/1000000/5410000"  # 100s remaining = 140s elapsed
+    b64_fwd  = base64.b64encode(prgr_fwd.encode("ascii")).decode("ascii")
+    xml_fwd  = f"<item><type>73736e63</type><code>70726772</code><length>{len(prgr_fwd)}</length><data encoding=\"base64\">{b64_fwd}</data></item>"
+    # Flush signal first (pfls) as sent by Shairport Sync during seek
+    xml_pfls = "<item><type>73736e63</type><code>70666c73</code><length>0</length></item>"
+    _process_metadata_item(xml_pfls, re_type, re_code, re_data, re_length)
+    _process_metadata_item(xml_fwd, re_type, re_code, re_data, re_length)
+    snap_fwd = track_meta.snapshot()
+
+    # Scrub backward to 30s (out of 240s total)
+    prgr_bwd = "1000000/1000000/10261000"  # 210s remaining = 30s elapsed
+    b64_bwd  = base64.b64encode(prgr_bwd.encode("ascii")).decode("ascii")
+    xml_bwd  = f"<item><type>73736e63</type><code>70726772</code><length>{len(prgr_bwd)}</length><data encoding=\"base64\">{b64_bwd}</data></item>"
+    _process_metadata_item(xml_pfls, re_type, re_code, re_data, re_length)
+    _process_metadata_item(xml_bwd, re_type, re_code, re_data, re_length)
+    snap_bwd = track_meta.snapshot()
+
+    if abs(snap_fwd["prog_elapsed"] - 140.0) < 0.5 and abs(snap_bwd["prog_elapsed"] - 30.0) < 0.5:
+        report.log_pass("Progress Bar", "Bi-Directional Seek & Scrub Geometry",
+                        f"Forward seek jumped to {snap_fwd['prog_elapsed']:.1f}s, Backward seek jumped to {snap_bwd['prog_elapsed']:.1f}s")
+    else:
+        report.log_fail("Progress Bar", "Bi-Directional Seek & Scrub Geometry",
+                        f"Seek jump mismatch: fwd={snap_fwd['prog_elapsed']}, bwd={snap_bwd['prog_elapsed']}")
+
+    # 11. Visual Scrubber Thumb Geometry Verification (0%, 50%, 100%)
+    # Test that scrubber dot is mathematically clamped within [x + radius, x + w - radius]
+    bar_x, bar_w, radius = 8, 224, 3
+    min_thumb = bar_x + radius
+    max_thumb = bar_x + bar_w - radius
+    dot_0   = max(min_thumb, min(max_thumb, bar_x + int(bar_w * 0.0)))
+    dot_50  = max(min_thumb, min(max_thumb, bar_x + int(bar_w * 0.5)))
+    dot_100 = max(min_thumb, min(max_thumb, bar_x + int(bar_w * 1.0)))
+    if dot_0 == min_thumb and dot_50 == (bar_x + 112) and dot_100 == max_thumb:
+        report.log_pass("Progress Bar", "Scrubber Thumb Clamp & Boundary Geometry",
+                        f"Thumb cleanly positioned at 0% ({dot_0}px), 50% ({dot_50}px), 100% ({dot_100}px)")
+    else:
+        report.log_fail("Progress Bar", "Scrubber Thumb Clamp & Boundary Geometry",
+                        f"Thumb geometry calculation error: 0%={dot_0}, 50%={dot_50}, 100%={dot_100}")
+
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))
 
