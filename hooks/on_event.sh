@@ -12,3 +12,5 @@
 # =====================================================================
 
 echo "$1" > /tmp/airplay_state
+chmod 666 /tmp/airplay_state 2>/dev/null || true
+

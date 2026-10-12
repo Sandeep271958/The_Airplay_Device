@@ -348,31 +348,101 @@ def render_loop():
 # STATE MONITOR  (background thread)
 # =====================================================================
 
+_last_audio_active_time = 0.0
+
+def _get_shairport_status():
+    """Query Shairport Sync over D-Bus for playback / active status."""
+    # 1. Try MPRIS PlaybackStatus
+    try:
+        res = subprocess.run(
+            ["dbus-send", "--system", "--print-reply",
+             "--dest=org.mpris.MediaPlayer2.ShairportSync",
+             "/org/mpris/MediaPlayer2",
+             "org.freedesktop.DBus.Properties.Get",
+             "string:org.mpris.MediaPlayer2.Player",
+             "string:PlaybackStatus"],
+            capture_output=True, text=True, timeout=1,
+        )
+        if "Playing" in res.stdout:
+            return "playing"
+        elif "Paused" in res.stdout:
+            return "paused"
+    except Exception:
+        pass
+
+    # 2. Try Native ShairportSync Active property
+    try:
+        res = subprocess.run(
+            ["dbus-send", "--system", "--print-reply",
+             "--dest=org.gnome.ShairportSync",
+             "/org/gnome/ShairportSync",
+             "org.freedesktop.DBus.Properties.Get",
+             "string:org.gnome.ShairportSync",
+             "string:Active"],
+            capture_output=True, text=True, timeout=1,
+        )
+        if "boolean true" in res.stdout:
+            return "playing"
+    except Exception:
+        pass
+
+    return None
+
+
 def state_monitor_thread():
     """
-    Poll connection/playback state every 2 seconds.
-
-    AirPlay mode : reads /tmp/airplay_state (written by shairport-sync hooks).
-    Bluetooth mode: queries bluetoothctl for connected devices.
+    Poll connection/playback state every 1 second.
+    Uses multi-source fusion:
+      1. CAVA audio energy (audio samples flowing through Loopback)
+      2. Shairport Sync D-Bus status (MPRIS PlaybackStatus / Native Active)
+      3. Track metadata activity
+      4. /tmp/airplay_state hook file
+      5. bluetoothctl query (for Bluetooth mode)
     """
+    global _last_audio_active_time
+
     while True:
         try:
             if state.mode == AppState.MODE_AIRPLAY:
+                # 1. Physical audio activity from CAVA
+                with _cava_lock:
+                    peak_audio = max(_cava_vals) if _cava_vals else 0
+                now = time.monotonic()
+                if peak_audio > 10:
+                    _last_audio_active_time = now
+
+                audio_flowing = (now - _last_audio_active_time) < 3.5
+
+                # 2. Shairport Sync status via D-Bus
+                dbus_status = _get_shairport_status()
+
+                # 3. /tmp/airplay_state file
+                file_status = None
                 if os.path.exists(STATE_FILE):
-                    with open(STATE_FILE, "r") as f:
-                        val = f.read().strip()
-                    if val == "playing":
-                        state.connected = True
-                        state.playing   = True
-                    elif val == "connected":
-                        state.connected = True
-                        state.playing   = False
-                    else:   # "disconnected" or anything unexpected
-                        state.connected = False
-                        state.playing   = False
-                else:
-                    state.connected = False
-                    state.playing   = False
+                    try:
+                        with open(STATE_FILE, "r") as f:
+                            file_status = f.read().strip()
+                    except Exception:
+                        pass
+
+                # 4. Metadata activity
+                meta_active = track_meta.has_meta() if TFT_AVAILABLE else False
+
+                is_playing = (
+                    audio_flowing
+                    or dbus_status == "playing"
+                    or file_status == "playing"
+                )
+
+                is_connected = (
+                    is_playing
+                    or dbus_status in ("paused", "playing")
+                    or file_status in ("connected", "playing")
+                    or meta_active
+                )
+
+                state.connected = is_connected
+                state.playing   = is_playing
 
             else:  # Bluetooth mode
                 result = subprocess.run(
@@ -381,7 +451,9 @@ def state_monitor_thread():
                 )
                 if "Connected: yes" in result.stdout:
                     state.connected = True
-                    state.playing   = True   # assume playing once connected
+                    with _cava_lock:
+                        peak = max(_cava_vals) if _cava_vals else 0
+                    state.playing = (peak > 10)
                 else:
                     state.connected = False
                     state.playing   = False
@@ -394,7 +466,7 @@ def state_monitor_thread():
             display_controller.set_playing(state.playing)
             display_controller.set_connected(state.connected)
 
-        time.sleep(2)
+        time.sleep(1.0)
 
 
 # =====================================================================
@@ -589,7 +661,7 @@ def cleanup(sig=None, frame=None):
     except Exception:
         pass
     print("[SHUTDOWN] Goodbye.")
-    sys.exit(0)
+    os._exit(0)
 
 
 # =====================================================================

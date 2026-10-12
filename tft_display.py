@@ -176,6 +176,10 @@ class TrackMeta:
             self.progress_current = current
             self.progress_end     = end
 
+    def has_meta(self):
+        with self._lock:
+            return bool(self.title or self.artist or self.art_img)
+
     def snapshot(self):
         """Return an immutable copy of all fields for rendering."""
         with self._lock:
@@ -203,92 +207,153 @@ class TrackMeta:
 
 track_meta = TrackMeta()
 
+# Buffer for chunked cover art (ssnc pfmd)
+_art_chunks = bytearray()
+
 
 # =====================================================================
 # SHAIRPORT-SYNC METADATA PARSER  (background thread)
 # =====================================================================
 
-
-
 def metadata_reader_thread():
     """
-    Read shairport-sync's metadata pipe and extract track info + album art.
-
-    Shairport-sync metadata pipe format (XML-like, one item per line):
-      <item>
-        <type>HEX</type>
-        <code>HEX</code>
-        <length>N</length>
-        <data encoding="base64">BASE64_DATA</data>
-      </item>
-
-    Key codes (in ASCII, sent as hex):
-      'asal' = album name
-      'asar' = artist
-      'minm' = track title
-      'PICT' = cover art (raw JPEG/PNG)
-      'prgr' = progress info  "start/current/end" in sample-rate units
+    Read shairport-sync's metadata pipe (/tmp/shairport-sync-metadata)
+    and extract track info + album art.
     """
+    import stat
+
+    # Ensure FIFO exists with 0666 permissions (so shairport-sync daemon can write)
     try:
-        os.mkfifo(METADATA_PIPE)
-    except FileExistsError:
-        pass   # already created by shairport-sync — that's fine
-    except OSError as e:
-        print(f"[TFT-META] Cannot create metadata pipe: {e}")
-        return
+        if os.path.exists(METADATA_PIPE):
+            if not stat.S_ISFIFO(os.stat(METADATA_PIPE).st_mode):
+                os.remove(METADATA_PIPE)
+                os.mkfifo(METADATA_PIPE, 0o666)
+        else:
+            os.mkfifo(METADATA_PIPE, 0o666)
+        os.chmod(METADATA_PIPE, 0o666)
+    except Exception as e:
+        print(f"[TFT-META] Pipe setup note: {e}")
 
     print(f"[TFT-META] Listening on {METADATA_PIPE}")
 
-    # Regex to extract fields from the XML-ish metadata format
     re_type   = re.compile(r'<type>([0-9a-fA-F]+)</type>')
     re_code   = re.compile(r'<code>([0-9a-fA-F]+)</code>')
     re_data   = re.compile(r'<data encoding="base64">(.*?)</data>', re.DOTALL)
     re_length = re.compile(r'<length>(\d+)</length>')
 
+    # Background D-Bus MPRIS metadata polling fallback
+    def _dbus_poller():
+        while True:
+            time.sleep(3)
+            try:
+                # If playing and no title is known yet, query D-Bus MPRIS
+                if display_controller._playing and not track_meta.has_meta():
+                    res = subprocess.run(
+                        ["dbus-send", "--system", "--print-reply",
+                         "--dest=org.mpris.MediaPlayer2.ShairportSync",
+                         "/org/mpris/MediaPlayer2",
+                         "org.freedesktop.DBus.Properties.Get",
+                         "string:org.mpris.MediaPlayer2.Player",
+                         "string:Metadata"],
+                        capture_output=True, text=True, timeout=2,
+                    )
+                    if res.returncode == 0 and "xesam:title" in res.stdout:
+                        m_t = re.search(r'string\s+"xesam:title"\s+variant\s+string\s+"([^"]+)"', res.stdout)
+                        if m_t:
+                            track_meta.set_field("title", m_t.group(1))
+                            print(f"[TFT-META] D-Bus Title: {m_t.group(1)}")
+                        m_a = re.search(r'string\s+"xesam:artist"\s+variant\s+array\s+\[\s+string\s+"([^"]+)"', res.stdout)
+                        if m_a:
+                            track_meta.set_field("artist", m_a.group(1))
+                            print(f"[TFT-META] D-Bus Artist: {m_a.group(1)}")
+            except Exception:
+                pass
+
+    threading.Thread(target=_dbus_poller, daemon=True, name="DBusMetaPoller").start()
+
     while True:
         try:
-            with open(METADATA_PIPE, "r") as pipe:
+            with open(METADATA_PIPE, "r", encoding="utf-8", errors="replace") as pipe:
                 buffer = ""
-                for line in pipe:
-                    buffer += line
-                    # Process when we see a complete </item>
-                    if "</item>" in buffer:
-                        _process_metadata_item(buffer, re_type, re_code,
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        # Writer closed the pipe — re-open on next session
+                        break
+                    buffer += chunk
+                    while "</item>" in buffer:
+                        item_str, buffer = buffer.split("</item>", 1)
+                        item_str += "</item>"
+                        _process_metadata_item(item_str, re_type, re_code,
                                                re_data, re_length)
-                        buffer = ""
         except (OSError, IOError):
             time.sleep(1)
 
 
 def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
     """Parse a single metadata <item> and update track_meta."""
+    global _art_chunks
     m_code = re_code.search(xml_text)
     if not m_code:
         return
 
     code_hex = m_code.group(1)
-    # Decode the 4-byte hex code to ASCII (e.g. "6d696e6d" → "minm")
     try:
         code_ascii = bytes.fromhex(code_hex).decode("ascii", errors="ignore")
     except ValueError:
         return
 
-    # Extract base64 data (if present)
     m_data = re_data.search(xml_text)
     if not m_data:
+        # Markers without payload data
+        if code_ascii in ("pbeg", "prsm"):
+            print("[TFT-META] AirPlay playback started / active (pbeg)")
+            display_controller.set_playing(True)
+            display_controller.set_connected(True)
+        elif code_ascii == "pfls":
+            # Stream flushed or cover art start
+            _art_chunks.clear()
+        elif code_ascii == "pfen":
+            # Cover art stream end
+            if _art_chunks:
+                print(f"[TFT-META] Chunked cover art assembled ({len(_art_chunks)} bytes)")
+                track_meta.set_art(bytes(_art_chunks))
+                _art_chunks.clear()
+                display_controller.set_playing(True)
+                display_controller.set_connected(True)
         return
-    raw_data = base64.b64decode(m_data.group(1))
+
+    try:
+        raw_b64 = m_data.group(1).strip()
+        raw_data = base64.b64decode(raw_b64)
+    except Exception:
+        return
 
     if code_ascii == "minm":
-        track_meta.set_field("title", raw_data.decode("utf-8", errors="replace"))
+        title = raw_data.decode("utf-8", errors="replace")
+        print(f"[TFT-META] Track Title: {title}")
+        track_meta.set_field("title", title)
+        display_controller.set_playing(True)
+        display_controller.set_connected(True)
     elif code_ascii == "asar":
-        track_meta.set_field("artist", raw_data.decode("utf-8", errors="replace"))
+        artist = raw_data.decode("utf-8", errors="replace")
+        print(f"[TFT-META] Artist: {artist}")
+        track_meta.set_field("artist", artist)
+        display_controller.set_playing(True)
+        display_controller.set_connected(True)
     elif code_ascii == "asal":
-        track_meta.set_field("album", raw_data.decode("utf-8", errors="replace"))
+        album = raw_data.decode("utf-8", errors="replace")
+        print(f"[TFT-META] Album: {album}")
+        track_meta.set_field("album", album)
     elif code_ascii == "PICT":
+        print(f"[TFT-META] Received Cover Art ({len(raw_data)} bytes)")
         track_meta.set_art(raw_data)
+        display_controller.set_playing(True)
+        display_controller.set_connected(True)
+    elif code_ascii == "pfmd":
+        # Cover art chunk
+        _art_chunks.extend(raw_data)
     elif code_ascii == "prgr":
-        # Format: "start/current/end" — values are in 44100 samples/sec
         try:
             parts = raw_data.decode("ascii").split("/")
             if len(parts) == 3:

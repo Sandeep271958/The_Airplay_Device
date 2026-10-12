@@ -99,7 +99,9 @@ echo "       → /etc/shairport-sync.conf (paths patched)"
 echo ""
 echo "[8/9] Setting up hook scripts..."
 chmod +x "$INSTALL_DIR/hooks/"*.sh 2>/dev/null || true
-echo "       → hooks/ made executable"
+sudo cp "$INSTALL_DIR/hooks/on_event.sh" /usr/local/bin/airplay_on_event.sh
+sudo chmod 755 /usr/local/bin/airplay_on_event.sh
+echo "       → /usr/local/bin/airplay_on_event.sh installed"
 
 # --- 9. Systemd services ---
 echo ""
