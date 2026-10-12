@@ -141,9 +141,8 @@ def _load_font_bold(size, preferred=None):
 _scale = DISPLAY_WIDTH / 240.0
 
 # Idle screen typography (Apple Watch / Lock screen aesthetic)
-FONT_CLOCK_TIME = _load_font_bold(int(54 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
-FONT_CLOCK_SEC  = _load_font_bold(int(18 * _scale), preferred="SF-Compact-Rounded.ttf")
-FONT_DATE       = _load_font(int(13 * _scale), preferred="SF-Compact-Rounded.ttf")
+FONT_CLOCK_TIME = _load_font_bold(int(58 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
+FONT_DATE       = _load_font_bold(int(16 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
 FONT_STATUS     = _load_font(int(11 * _scale), preferred="SF-Compact-Rounded.ttf")
 
 # Music screen typography (refined proportions to fit comfortably in 80px bottom strip)
@@ -937,59 +936,47 @@ class DisplayRenderer:
 
         # 2. Large Time in SF Pro Rounded Bold (deep inky black for razor-sharp readability)
         time_str = now.strftime("%H:%M")
-        self._draw_text_centered(draw, int(58 * _scale), time_str,
+        self._draw_text_centered(draw, int(62 * _scale), time_str,
                                  FONT_CLOCK_TIME, (18, 20, 28))
 
-        # 3. Seconds Badge (clean modern light blue pill)
-        sec_str = now.strftime(":%S")
-        sec_pill_w = int(48 * _scale)
-        sec_pill_h = int(20 * _scale)
-        sec_pill_x = (self.w - sec_pill_w) // 2
-        sec_pill_y = int(136 * _scale)
-        draw.rounded_rectangle([sec_pill_x, sec_pill_y, sec_pill_x + sec_pill_w, sec_pill_y + sec_pill_h],
-                               radius=sec_pill_h // 2,
-                               fill=(232, 240, 255), outline=(200, 218, 250), width=1)
-        self._draw_text_centered(draw, sec_pill_y + int(3 * _scale), sec_str,
-                                 FONT_CLOCK_SEC, (0, 110, 240))
-
-        # 4. Date & Day (e.g. Tuesday, 13 October) in SF Compact Rounded
+        # 3. Date & Day (prominent & bold SF Pro Rounded, perfectly proportioned)
         date_str = now.strftime("%A, %d %B")
-        self._draw_text_centered(draw, int(172 * _scale), date_str,
-                                 FONT_DATE, (75, 82, 102))
+        self._draw_text_centered(draw, int(136 * _scale), date_str,
+                                 FONT_DATE, (60, 68, 88))
 
-        # 5. Soft Accent Divider Line
-        div_y = int(210 * _scale)
+        # 4. Soft Accent Divider Line
+        div_y = int(182 * _scale)
         margin = int(45 * _scale)
         draw.line([(margin, div_y), (self.w - margin, div_y)],
                   fill=(220, 225, 238), width=1)
 
-        # 6. Audio Mode Pill
+        # 5. Audio Mode Pill
         mode_label = f"Mode: {mode_str}"
-        mode_pill_w = int(150 * _scale)
+        mode_pill_w = int(152 * _scale)
         mode_pill_h = int(24 * _scale)
         mode_pill_x = (self.w - mode_pill_w) // 2
-        mode_pill_y = int(228 * _scale)
+        mode_pill_y = int(204 * _scale)
         draw.rounded_rectangle([mode_pill_x, mode_pill_y, mode_pill_x + mode_pill_w, mode_pill_y + mode_pill_h],
                                radius=mode_pill_h // 2,
                                fill=CARD_BG, outline=CARD_BORDER, width=1)
         self._draw_text_centered(draw, mode_pill_y + int(5 * _scale), mode_label,
                                  FONT_STATUS, (70, 75, 95))
 
-        # 7. Wi-Fi SSID
+        # 6. Wi-Fi SSID Pill
         ssid = self._get_wifi_ssid()
         wifi_str = f"Wi-Fi: {ssid}" if ssid else "Wi-Fi: Connected"
         wifi_pill_w = int(160 * _scale)
         wifi_pill_h = int(24 * _scale)
         wifi_pill_x = (self.w - wifi_pill_w) // 2
-        wifi_pill_y = int(260 * _scale)
+        wifi_pill_y = int(238 * _scale)
         draw.rounded_rectangle([wifi_pill_x, wifi_pill_y, wifi_pill_x + wifi_pill_w, wifi_pill_y + wifi_pill_h],
                                radius=wifi_pill_h // 2,
                                fill=CARD_BG, outline=CARD_BORDER, width=1)
         self._draw_text_centered(draw, wifi_pill_y + int(5 * _scale), wifi_str,
                                  FONT_STATUS, (90, 95, 115))
 
-        # 8. Subtle Brand Footer
-        self._draw_text_centered(draw, int(298 * _scale), "Sandy's AirPlay Device",
+        # 7. Subtle Brand Footer
+        self._draw_text_centered(draw, int(288 * _scale), "Sandy's AirPlay Device",
                                  _load_font(max(8, int(9 * _scale))), (155, 160, 180))
 
         return img

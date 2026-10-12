@@ -237,11 +237,9 @@ try:
     tw = bbox[2] - bbox[0]
     draw.text(((WIDTH - tw) // 2, 18), "SANDY'S AIRPLAY", font=font_title, fill=(18, 20, 28))
 
-    # SF Pro Rounded Time Preview
-    draw.text((36, 60), "12:45", font=font_time, fill=(18, 20, 28))
-    draw.rounded_rectangle([165, 82, 215, 104], radius=11, fill=(232, 240, 255), outline=(200, 218, 250), width=1)
-    draw.text((176, 85), ":30", font=font_med, fill=(0, 110, 240))
-    draw.text((36, 118), "Tuesday, 13 October", font=font_body, fill=(75, 82, 102))
+    # SF Pro Rounded Time Preview (No seconds, prominent Day & Date)
+    draw.text((36, 58), "12:45", font=font_time, fill=(18, 20, 28))
+    draw.text((36, 116), "Tuesday, 13 October", font=font_med, fill=(60, 68, 88))
 
     # Color swatches: Red, Orange, Yellow, Green, Cyan, Blue, Magenta, Black
     swatches = [
