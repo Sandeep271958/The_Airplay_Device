@@ -567,16 +567,31 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT,  cleanup)
 
     # --- Initialise 5D Rocker buttons with debouncing ---
-    btns = {
-        "vol_up":   Button(PIN_VOL_UP,      pull_up=True, bounce_time=BOUNCE_TIME),
-        "vol_down": Button(PIN_VOL_DOWN,     pull_up=True, bounce_time=BOUNCE_TIME),
-        "prev":     Button(PIN_PREV,         pull_up=True, bounce_time=BOUNCE_TIME),
-        "next":     Button(PIN_NEXT,         pull_up=True, bounce_time=BOUNCE_TIME),
-        "play":     Button(PIN_PLAY_PAUSE,   pull_up=True, bounce_time=BOUNCE_TIME),
-        "vis":      Button(PIN_VIS_MODE,     pull_up=True, bounce_time=BOUNCE_TIME),
-        "mode":     Button(PIN_MODE_TOGGLE,  pull_up=True, bounce_time=BOUNCE_TIME,
-                           hold_time=HOLD_TIME),
-    }
+    try:
+        btns = {
+            "vol_up":   Button(PIN_VOL_UP,      pull_up=True, bounce_time=BOUNCE_TIME),
+            "vol_down": Button(PIN_VOL_DOWN,     pull_up=True, bounce_time=BOUNCE_TIME),
+            "prev":     Button(PIN_PREV,         pull_up=True, bounce_time=BOUNCE_TIME),
+            "next":     Button(PIN_NEXT,         pull_up=True, bounce_time=BOUNCE_TIME),
+            "play":     Button(PIN_PLAY_PAUSE,   pull_up=True, bounce_time=BOUNCE_TIME),
+            "vis":      Button(PIN_VIS_MODE,     pull_up=True, bounce_time=BOUNCE_TIME),
+            "mode":     Button(PIN_MODE_TOGGLE,  pull_up=True, bounce_time=BOUNCE_TIME,
+                               hold_time=HOLD_TIME),
+        }
+    except Exception as e:
+        if "busy" in str(e).lower():
+            print(f"\n[GPIO ERROR] Failed to claim GPIO pins: {e}")
+            print("  ✦ Another instance of 'main.py' is already running!")
+            print("  ✦ In modern Linux (Bookworm / lgpio), GPIO pins cannot be opened twice.")
+            print("  ✦ Check if the systemd background service is running:")
+            print("        sudo systemctl status airplaydevice")
+            print("  ✦ To stop the background service so you can test manually in this terminal:")
+            print("        sudo systemctl stop airplaydevice")
+            print("  ✦ To inspect running python processes:")
+            print("        ps aux | grep python")
+        else:
+            print(f"\n[GPIO ERROR] Button initialization failed: {e}")
+        sys.exit(1)
 
     btns["vol_up"].when_pressed   = on_vol_up
     btns["vol_down"].when_pressed = on_vol_down
