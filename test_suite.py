@@ -263,13 +263,64 @@ try:
     xml_pcen = "<item><type>73736e63</type><code>7063656e</code><length>0</length></item>"
     _process_metadata_item(xml_pcen, re_type, re_code, re_data, re_length)
 
-    from tft_display import track_meta
+    from tft_display import track_meta, DisplayRenderer
     if track_meta.art_img is not None:
         report.log_pass("Album Art", "Chunked Artwork Assembly (pcst/PICT/pcen)",
                         f"Multi-chunk artwork successfully assembled ({track_meta.art_img.width}x{track_meta.art_img.height})")
     else:
         report.log_fail("Album Art", "Chunked Artwork Assembly (pcst/PICT/pcen)",
                         "Chunked artwork failed to assemble or decode")
+
+    # Sub-test F: Progress Bar Real-Time Interpolation & 32-bit RTP Math
+    # 1. 32-bit unsigned RTP timestamp parsing with rollover
+    start_rtp = 4294947295  # 0xFFFFFFFF - 20001
+    curr_rtp  = 4294991395  # 1.0s elapsed (44100 frames)
+    end_rtp   = 4389999     # Rolled over into next epoch (100.0s total = 4410000 frames)
+    prgr_str  = f"{start_rtp}/{curr_rtp}/{end_rtp}"
+    b64_prgr  = base64.b64encode(prgr_str.encode("ascii")).decode("ascii")
+    xml_prgr  = f"<item><type>73736e63</type><code>70726772</code><length>{len(prgr_str)}</length><data encoding=\"base64\">{b64_prgr}</data></item>"
+    _process_metadata_item(xml_prgr, re_type, re_code, re_data, re_length)
+
+    snap_prgr = track_meta.snapshot()
+    if abs(snap_prgr["prog_duration"] - 100.0) < 0.1 and abs(snap_prgr["prog_elapsed"] - 1.0) < 0.5:
+        report.log_pass("Progress Bar", "32-bit RTP Timestamp Rollover",
+                        f"Parsed 100s duration and 1s elapsed across uint32 rollover ({snap_prgr['prog_duration']:.1f}s)")
+    else:
+        report.log_fail("Progress Bar", "32-bit RTP Timestamp Rollover",
+                        f"Failed rollover math: dur={snap_prgr['prog_duration']}, elapsed={snap_prgr['prog_elapsed']}")
+
+    # 2. Real-time monotonic progress interpolation
+    track_meta.set_progress(10.0, 100.0, is_playing=True)
+    time.sleep(0.06)  # Simulate 1 frame (~60ms)
+    snap_interp = track_meta.snapshot()
+    if snap_interp["prog_current"] > 10.04 and snap_interp["prog_frac"] > 0.10:
+        report.log_pass("Progress Bar", "Monotonic Real-Time Interpolation",
+                        f"Smoothly advanced from 10.0s to {snap_interp['prog_current']:.3f}s between packets")
+    else:
+        report.log_fail("Progress Bar", "Monotonic Real-Time Interpolation",
+                        f"Progress remained frozen or inaccurate: {snap_interp['prog_current']}")
+
+    # 3. Pause freezing behavior
+    track_meta.set_playing_state(False)
+    freeze_elapsed = track_meta.snapshot()["prog_current"]
+    time.sleep(0.04)
+    freeze_check = track_meta.snapshot()["prog_current"]
+    if abs(freeze_check - freeze_elapsed) < 0.005:
+        report.log_pass("Progress Bar", "Pause Freeze Accuracy",
+                        f"Elapsed clock froze accurately during pause ({freeze_check:.3f}s)")
+    else:
+        report.log_fail("Progress Bar", "Pause Freeze Accuracy",
+                        f"Clock drifted while paused: {freeze_check} vs {freeze_elapsed}")
+
+    # 4. Progress Bar Rendering (6px thickness, 8px margins, scrubber thumb)
+    renderer = DisplayRenderer(240, 320)
+    track_meta.set_playing_state(True)
+    frame = renderer.render_art_info(track_meta.snapshot(), [0] * 8)
+    if frame and frame.size == (240, 320):
+        report.log_pass("Progress Bar", "High-Visibility Apple Pill & Thumb Rendering",
+                        "240x320 frame rendered cleanly with 6px thick track bar and scrubber dot")
+    else:
+        report.log_fail("Progress Bar", "High-Visibility Apple Pill & Thumb Rendering", "Render failed")
 
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))

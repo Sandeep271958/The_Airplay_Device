@@ -234,28 +234,35 @@ class TrackMeta:
         self.album   = ""
         self.art_img = None   # PIL Image or None
         self._art_raw = b""   # raw bytes for dedup
-        # Progress: all in seconds
-        self.progress_start   = 0.0
-        self.progress_current = 0.0
-        self.progress_end     = 0.0
+        # Real-time progress tracking
+        self.prog_elapsed_base = 0.0     # Elapsed seconds at last sync point
+        self.prog_duration     = 0.0     # Total duration in seconds
+        self.prog_update_time  = time.monotonic()  # monotonic clock at last sync point
+        self.is_playing        = False
 
     def on_track_change(self):
-        """Immediately clear previous track metadata on track skip."""
+        """Immediately clear previous track metadata and progress on track skip."""
         with self._lock:
             self.title   = ""
             self.artist  = ""
             self.album   = ""
             self.art_img = None
             self._art_raw = b""
+            self.prog_elapsed_base = 0.0
+            self.prog_duration     = 0.0
+            self.prog_update_time  = time.monotonic()
 
     def set_field(self, key, value):
         with self._lock:
             if key == "title":
                 if value and value != self.title:
                     self.title = value
-                    # Invalidate old album art when a new track title arrives
+                    # Invalidate old album art and progress when a new track title arrives
                     self.art_img = None
                     self._art_raw = b""
+                    self.prog_elapsed_base = 0.0
+                    self.prog_duration     = 0.0
+                    self.prog_update_time  = time.monotonic()
             elif key == "artist":
                 self.artist = value
             elif key == "album":
@@ -276,27 +283,80 @@ class TrackMeta:
                 print(f"[TFT-META] Art decode error: {e}")
                 self.art_img = None
 
-    def set_progress(self, start, current, end):
+    def set_progress(self, a, b=None, c=None, is_playing=None):
+        """
+        Update progress anchor from AirPlay prgr packet.
+        Supports both signatures:
+          set_progress(elapsed, duration, is_playing=...)
+          set_progress(start, current, end)
+        """
         with self._lock:
-            self.progress_start   = start
-            self.progress_current = current
-            self.progress_end     = end
+            if c is not None:
+                # Legacy: start, current, end in seconds
+                duration = float(c) - float(a)
+                elapsed  = float(b) - float(a)
+            elif b is not None:
+                elapsed  = float(a)
+                duration = float(b)
+            else:
+                elapsed  = float(a)
+                duration = 0.0
+
+            if duration > 0.0:
+                elapsed = max(0.0, min(duration, elapsed))
+            else:
+                duration = max(0.0, duration)
+                elapsed = max(0.0, elapsed)
+
+            self.prog_elapsed_base = elapsed
+            self.prog_duration     = duration
+            self.prog_update_time  = time.monotonic()
+            if is_playing is not None:
+                self.is_playing    = bool(is_playing)
+
+    def set_playing_state(self, playing):
+        """Update playing state to freeze or resume real-time progress clock."""
+        with self._lock:
+            now = time.monotonic()
+            if self.is_playing and not playing:
+                # Freeze elapsed time at current monotonic offset
+                dt = now - self.prog_update_time
+                self.prog_elapsed_base = min(self.prog_duration, self.prog_elapsed_base + dt)
+                self.prog_update_time  = now
+            elif not self.is_playing and playing:
+                # Resume: re-anchor clock
+                self.prog_update_time  = now
+            self.is_playing = bool(playing)
 
     def has_meta(self):
         with self._lock:
             return bool(self.title or self.artist or self.art_img)
 
     def snapshot(self):
-        """Return an immutable copy of all fields for rendering."""
+        """Return an immutable copy of all fields with real-time interpolated progress."""
         with self._lock:
+            now = time.monotonic()
+            if self.is_playing and self.prog_duration > 0.0:
+                elapsed = self.prog_elapsed_base + (now - self.prog_update_time)
+                elapsed = max(0.0, min(self.prog_duration, elapsed))
+            else:
+                elapsed = max(0.0, min(self.prog_duration, self.prog_elapsed_base))
+
+            duration = self.prog_duration
+            frac = (elapsed / duration) if duration > 0.0 else 0.0
+
             return {
-                "title":    self.title,
-                "artist":   self.artist,
-                "album":    self.album,
-                "art":      self.art_img.copy() if self.art_img else None,
-                "prog_start":   self.progress_start,
-                "prog_current": self.progress_current,
-                "prog_end":     self.progress_end,
+                "title":         self.title,
+                "artist":        self.artist,
+                "album":         self.album,
+                "art":           self.art_img.copy() if self.art_img else None,
+                "prog_start":    0.0,
+                "prog_current":  elapsed,
+                "prog_end":      duration,
+                "prog_elapsed":  elapsed,
+                "prog_duration": duration,
+                "prog_frac":     frac,
+                "is_playing":    self.is_playing,
             }
 
     def clear(self):
@@ -306,9 +366,10 @@ class TrackMeta:
             self.album   = ""
             self.art_img = None
             self._art_raw = b""
-            self.progress_start   = 0.0
-            self.progress_current = 0.0
-            self.progress_end     = 0.0
+            self.prog_elapsed_base = 0.0
+            self.prog_duration     = 0.0
+            self.prog_update_time  = time.monotonic()
+            self.is_playing        = False
 
 
 track_meta = TrackMeta()
@@ -442,16 +503,20 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
     if not m_data:
         # Markers without payload data
         if code_ascii in ("pbeg", "prsm"):
-            print("[TFT-META] AirPlay playback active (pbeg/prsm)")
+            print(f"[TFT-META] AirPlay playback active ({code_ascii})")
             display_controller.set_playing(True)
             display_controller.set_connected(True)
+            track_meta.set_playing_state(True)
+        elif code_ascii in ("paus", "pend"):
+            print(f"[TFT-META] AirPlay playback paused/ended ({code_ascii})")
+            display_controller.set_playing(False)
+            track_meta.set_playing_state(False)
         elif code_ascii == "pfls":
-            # Stream flushed (track skip / audio flush) — discard old art chunks
+            # Stream flushed (track skip / audio flush) — discard old art chunks & track progress
             print("[TFT-META] Stream flushed (pfls)")
             _in_picture_stream = False
             _art_chunks.clear()
-            # Invalidate old artwork so previous album art does not linger
-            track_meta.art_img = None
+            track_meta.on_track_change()
         elif code_ascii == "pcst":
             # Picture stream start
             print("[TFT-META] Album art stream starting (pcst)...")
@@ -467,6 +532,7 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                 _art_chunks.clear()
                 display_controller.set_playing(True)
                 display_controller.set_connected(True)
+                track_meta.set_playing_state(True)
         return
 
     try:
@@ -481,12 +547,14 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         track_meta.set_field("title", title)
         display_controller.set_playing(True)
         display_controller.set_connected(True)
+        track_meta.set_playing_state(True)
     elif code_ascii == "asar":
         artist = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Artist: {artist}")
         track_meta.set_field("artist", artist)
         display_controller.set_playing(True)
         display_controller.set_connected(True)
+        track_meta.set_playing_state(True)
     elif code_ascii == "asal":
         album = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Album: {album}")
@@ -507,6 +575,7 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                     _art_chunks.clear()
                     display_controller.set_playing(True)
                     display_controller.set_connected(True)
+                    track_meta.set_playing_state(True)
                 except Exception:
                     # Partial data, wait for remaining chunks or pcen
                     pass
@@ -514,14 +583,22 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         try:
             parts = raw_data.decode("ascii").split("/")
             if len(parts) == 3:
+                start_rtp = int(parts[0])
+                curr_rtp  = int(parts[1])
+                end_rtp   = int(parts[2])
+                # RTP timestamps are 32-bit unsigned integers; handle rollover with & 0xFFFFFFFF
+                dur_frames     = (end_rtp - start_rtp) & 0xFFFFFFFF
+                elapsed_frames = (curr_rtp - start_rtp) & 0xFFFFFFFF
                 rate = 44100.0
-                track_meta.set_progress(
-                    float(parts[0]) / rate,
-                    float(parts[1]) / rate,
-                    float(parts[2]) / rate,
-                )
-        except (ValueError, IndexError):
-            pass
+                dur_sec     = dur_frames / rate
+                elapsed_sec = elapsed_frames / rate
+                # Sanity check: valid track duration between 1 sec and 12 hours
+                if 1.0 <= dur_sec <= 43200.0:
+                    elapsed_sec = max(0.0, min(dur_sec, elapsed_sec))
+                    track_meta.set_progress(elapsed_sec, dur_sec, is_playing=display_controller.is_playing)
+                    print(f"[TFT-META] Progress sync: {elapsed_sec:.1f}s / {dur_sec:.1f}s ({(elapsed_sec/dur_sec)*100:.1f}%)")
+        except (ValueError, IndexError) as e:
+            print(f"[TFT-META] prgr parse error: {e}")
 
 
 # =====================================================================
@@ -831,10 +908,10 @@ class DisplayRenderer:
             draw_marquee_text(img, draw, margin_x, info_y + int(36 * _scale), max_w,
                               album_text, FONT_ALBUM, (110, 110, 130), self.album_marquee)
 
-        # Progress bar at very bottom
-        bar_y = self.h - int(10 * _scale)
-        bar_h = int(3 * _scale)
-        bar_margin = int(12 * _scale)
+        # Progress bar at very bottom: 6px thick, wider 8px margins
+        bar_y = self.h - int(12 * _scale)
+        bar_h = int(6 * _scale)
+        bar_margin = int(8 * _scale)
         self._draw_progress_bar(draw, bar_margin, bar_y, self.w - 2 * bar_margin,
                                 bar_h, meta)
 
@@ -993,21 +1070,40 @@ class DisplayRenderer:
         draw.text((x, y), text, font=font, fill=color)
 
     def _draw_progress_bar(self, draw, x, y, w, h, meta):
-        """Draw a track progress bar."""
-        duration = meta["prog_end"] - meta["prog_start"]
-        if duration <= 0:
-            return
-        elapsed = meta["prog_current"] - meta["prog_start"]
-        frac = max(0.0, min(1.0, elapsed / duration))
+        """
+        Draw a track progress bar with Apple-style rounded pill track,
+        crisp active fill, and prominent leading scrubber head.
+        """
+        duration = meta.get("prog_duration", 0.0)
+        frac = meta.get("prog_frac", 0.0)
+        if duration <= 0.0:
+            d = meta.get("prog_end", 0.0) - meta.get("prog_start", 0.0)
+            if d > 0:
+                duration = d
+                frac = max(0.0, min(1.0, (meta.get("prog_current", 0.0) - meta.get("prog_start", 0.0)) / d))
 
-        # Background
-        draw.rounded_rectangle([x, y, x + w, y + h], radius=h // 2,
-                               fill=PROGRESS_BG)
-        # Fill
-        fill_w = int(w * frac)
-        if fill_w > 0:
-            draw.rounded_rectangle([x, y, x + fill_w, y + h], radius=h // 2,
+        radius = max(2, h // 2)
+
+        # 1. Soft-grey pill track background with subtle border
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=radius,
+                               fill=PROGRESS_BG, outline=(210, 216, 230), width=1)
+
+        # 2. Active progress fill (bright iOS Blue)
+        if duration > 0.0 and frac > 0.0:
+            fill_w = int(w * frac)
+            fill_w = max(radius * 2, min(w, fill_w))
+            draw.rounded_rectangle([x, y, x + fill_w, y + h], radius=radius,
                                    fill=PROGRESS_FG)
+
+            # 3. Modern Apple scrubber head thumb indicator at current playback point
+            dot_cx = x + int(w * frac)
+            dot_cx = max(x + radius, min(x + w - radius, dot_cx))
+            dot_cy = y + radius
+            dot_r = radius + 2  # 5px radius (10px diameter) on 6px bar
+
+            # Crisp white thumb with bright iOS blue rim
+            draw.ellipse([dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r],
+                         fill=(255, 255, 255), outline=PROGRESS_FG, width=1)
 
     def _draw_mini_vis(self, draw, x, y, w, h, cava_vals):
         """
@@ -1262,9 +1358,15 @@ class DisplayController:
             self._mode = (self._mode + 1) % 3
             return self._mode
 
+    @property
+    def is_playing(self):
+        with self._lock:
+            return self._playing
+
     def set_playing(self, v):
         with self._lock:
-            self._playing = v
+            self._playing = bool(v)
+        track_meta.set_playing_state(v)
 
     def set_connected(self, v):
         with self._lock:
