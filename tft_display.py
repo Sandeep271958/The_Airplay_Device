@@ -361,11 +361,10 @@ class ST7789Backend(DisplayBackend):
     """
 
     def __init__(self, width, height,
-                 spi_port=1, spi_cs=0,
+                 spi_port=4, spi_cs=0,
                  dc_pin=24, rst_pin=12, bl_pin=20):
         super().__init__(width, height)
         self._display = None
-        # Store pin config for when we activate it
         self._spi_port = spi_port
         self._spi_cs   = spi_cs
         self._dc_pin   = dc_pin
@@ -373,12 +372,36 @@ class ST7789Backend(DisplayBackend):
         self._bl_pin   = bl_pin
 
     def _init_hardware(self):
-        """Lazy-init the ST7789 driver.  Called on first show()."""
+        """Lazy-init the ST7789 driver. Called on first show()."""
         try:
             import st7789 as st7789_lib
+
+            # Auto-detect available SPI port if default /dev/spidevX.Y does not exist
+            port = self._spi_port
+            cs = self._spi_cs
+
+            if not os.path.exists(f"/dev/spidev{port}.{cs}"):
+                found = False
+                for p in [4, 1, 0]:
+                    if os.path.exists(f"/dev/spidev{p}.{cs}"):
+                        port = p
+                        found = True
+                        break
+                    elif os.path.exists(f"/dev/spidev{p}.0"):
+                        port = p
+                        cs = 0
+                        found = True
+                        break
+                if not found:
+                    print(f"[TFT] WARNING: Device '/dev/spidev{self._spi_port}.{self._spi_cs}' not found!")
+                    print("      ✦ On RPi 4B, add this line to /boot/firmware/config.txt:")
+                    print("            dtoverlay=spi4-1cs,cs0_pin=25")
+                    print("      ✦ Move the purple SCK wire to Pin 26 (GPIO 7).")
+
+            print(f"[TFT] Connecting to ST7789 via /dev/spidev{port}.{cs} (DC={self._dc_pin}, RST={self._rst_pin}, BL={self._bl_pin})...")
             self._display = st7789_lib.ST7789(
-                port=self._spi_port,
-                cs=self._spi_cs,
+                port=port,
+                cs=cs,
                 dc=self._dc_pin,
                 rst=self._rst_pin,
                 backlight=self._bl_pin,
@@ -387,6 +410,9 @@ class ST7789Backend(DisplayBackend):
                 rotation=0,
                 spi_speed_hz=40_000_000,
             )
+            if hasattr(self._display, "set_backlight"):
+                self._display.set_backlight(True)
+            print("[TFT] ST7789 driver initialised successfully!")
         except ImportError:
             print("[TFT] st7789 library not installed — falling back to stub")
             self._display = "STUB"

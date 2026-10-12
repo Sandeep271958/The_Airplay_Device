@@ -16,8 +16,9 @@ dtparam=audio=on
 # Enable SPI interface (used by WS2812 LED driver on GPIO 10)
 dtparam=spi=on
 
-# Enable Software SPI (Bus 1) for the ST7789 TFT display
-dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1
+# Hardware SPI4 for the ST7789 TFT display (MOSI=GPIO 6 Pin 31, SCLK=GPIO 7 Pin 26, CS=GPIO 25 Pin 22)
+# Purple SCK wire moves from Pin 29 to Pin 26 (GPIO 7)
+dtoverlay=spi4-1cs,cs0_pin=25
 
 # Force audio output to 3.5mm jack (not HDMI)
 hdmi_ignore_edid_audio=1

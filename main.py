@@ -479,40 +479,79 @@ def toggle_mode():
 
 
 # =====================================================================
-# MEDIA CONTROL CALLBACKS
+# MEDIA CONTROL CALLBACKS  (AirPlay & Bluetooth)
 # =====================================================================
 
+def _send_dbus_command(destination, path, interface, method):
+    """Send a D-Bus method call on the system message bus."""
+    try:
+        subprocess.run(
+            ["dbus-send", "--system", "--type=method_call",
+             f"--dest={destination}", path, f"{interface}.{method}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+        )
+    except Exception:
+        pass
+
+
 def on_vol_up():
-    """Increase volume via ALSA softvol control."""
+    """Increase volume via ALSA softvol and send VolumeUp to AirPlay source."""
     print("[BTN] Volume ▲")
     subprocess.run(["amixer", "sset", "SoftMaster", "5%+"], check=False)
+    if state.mode == AppState.MODE_AIRPLAY:
+        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
+                           "org.gnome.ShairportSync.RemoteControl", "VolumeUp")
 
 
 def on_vol_down():
-    """Decrease volume via ALSA softvol control."""
+    """Decrease volume via ALSA softvol and send VolumeDown to AirPlay source."""
     print("[BTN] Volume ▼")
     subprocess.run(["amixer", "sset", "SoftMaster", "5%-"], check=False)
+    if state.mode == AppState.MODE_AIRPLAY:
+        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
+                           "org.gnome.ShairportSync.RemoteControl", "VolumeDown")
 
 
 def on_next():
-    """Skip to next track (Bluetooth only — AirPlay is sender-controlled)."""
+    """Skip to next track on connected phone (AirPlay or Bluetooth)."""
     print("[BTN] Next ▶▶")
-    if state.mode == AppState.MODE_BLUETOOTH:
-        subprocess.run(["playerctl", "next"], check=False)
+    if state.mode == AppState.MODE_AIRPLAY:
+        # Shairport Sync remote control (sends DACP next to iPhone)
+        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
+                           "org.gnome.ShairportSync.RemoteControl", "Next")
+        _send_dbus_command("org.mpris.MediaPlayer2.ShairportSync", "/org/mpris/MediaPlayer2",
+                           "org.mpris.MediaPlayer2.Player", "Next")
+    elif state.mode == AppState.MODE_BLUETOOTH:
+        subprocess.run(["bluetoothctl", "next"], check=False)
 
 
 def on_prev():
-    """Skip to previous track (Bluetooth only)."""
+    """Skip to previous track on connected phone (AirPlay or Bluetooth)."""
     print("[BTN] Prev ◀◀")
-    if state.mode == AppState.MODE_BLUETOOTH:
-        subprocess.run(["playerctl", "previous"], check=False)
+    if state.mode == AppState.MODE_AIRPLAY:
+        # Shairport Sync remote control (sends DACP previous to iPhone)
+        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
+                           "org.gnome.ShairportSync.RemoteControl", "Previous")
+        _send_dbus_command("org.mpris.MediaPlayer2.ShairportSync", "/org/mpris/MediaPlayer2",
+                           "org.mpris.MediaPlayer2.Player", "Previous")
+    elif state.mode == AppState.MODE_BLUETOOTH:
+        subprocess.run(["bluetoothctl", "previous"], check=False)
 
 
 def on_play_pause():
-    """Toggle play / pause (Bluetooth only)."""
+    """Toggle play / pause on connected phone (AirPlay or Bluetooth)."""
     print("[BTN] Play/Pause ⏯")
-    if state.mode == AppState.MODE_BLUETOOTH:
-        subprocess.run(["playerctl", "play-pause"], check=False)
+    if state.mode == AppState.MODE_AIRPLAY:
+        # Shairport Sync remote control (sends DACP play-pause to iPhone)
+        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
+                           "org.gnome.ShairportSync.RemoteControl", "PlayPause")
+        _send_dbus_command("org.mpris.MediaPlayer2.ShairportSync", "/org/mpris/MediaPlayer2",
+                           "org.mpris.MediaPlayer2.Player", "PlayPause")
+    elif state.mode == AppState.MODE_BLUETOOTH:
+        if state.playing:
+            subprocess.run(["bluetoothctl", "pause"], check=False)
+        else:
+            subprocess.run(["bluetoothctl", "play"], check=False)
 
 
 def on_vis_mode():
@@ -529,8 +568,15 @@ def on_vis_mode():
 # CLEAN SHUTDOWN
 # =====================================================================
 
+_cleaning_up = False
+
 def cleanup(sig=None, frame=None):
-    """Turn off all LEDs, stop CAVA, and exit."""
+    """Turn off all LEDs, stop CAVA, and exit gracefully (idempotent)."""
+    global _cleaning_up
+    if _cleaning_up:
+        return
+    _cleaning_up = True
+
     print("\n[SHUTDOWN] Cleaning up…")
     stop_cava()
     if TFT_AVAILABLE:
