@@ -82,54 +82,141 @@ VIS_GRADIENT = [
 
 
 # =====================================================================
-# FONT LOADING
+# FONT LOADING  (Prioritizes authentic Apple SF Rounded typography)
 # =====================================================================
 
-def _load_font(size):
+FONTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "fonts")
+
+def _load_font(size, preferred=None):
     """
-    Try to load a clean sans-serif font.  Falls back to the built-in
-    bitmap font if nothing is installed (ugly but functional).
+    Load a font, prioritizing bundled SF Rounded fonts in assets/fonts/,
+    then falling back to system sans-serif fonts.
     """
-    candidates = [
+    candidates = []
+    if preferred:
+        candidates.append(os.path.join(FONTS_DIR, preferred))
+    candidates.extend([
+        os.path.join(FONTS_DIR, "SF-Compact-Rounded.ttf"),
+        os.path.join(FONTS_DIR, "SF-Pro-Rounded-Bold.ttf"),
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    ]
+    ])
     for path in candidates:
         if os.path.exists(path):
-            return ImageFont.truetype(path, size)
-    # Last resort: Pillow's built-in bitmap font (small, not scalable)
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
     return ImageFont.load_default()
 
 
-def _load_font_bold(size):
-    """Same as _load_font but tries bold variants first."""
-    candidates = [
+def _load_font_bold(size, preferred=None):
+    """Load a bold font, prioritizing SF Pro Rounded Bold."""
+    candidates = []
+    if preferred:
+        candidates.append(os.path.join(FONTS_DIR, preferred))
+    candidates.extend([
+        os.path.join(FONTS_DIR, "SF-Pro-Rounded-Bold.ttf"),
+        os.path.join(FONTS_DIR, "SF-Compact-Rounded.ttf"),
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
         "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-    ]
+    ])
     for path in candidates:
         if os.path.exists(path):
-            return ImageFont.truetype(path, size)
-    return _load_font(size)
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    return _load_font(size, preferred)
 
 
-# Pre-load fonts at various sizes (relative to display width for scaling)
-_scale = DISPLAY_WIDTH / 240.0   # 1.0 at 240px, prevents massive fonts on portrait displays
+# Pre-load refined fonts (scaled for 240px portrait display)
+_scale = DISPLAY_WIDTH / 240.0
 
-FONT_TITLE    = _load_font_bold(int(18 * _scale))
-FONT_ARTIST   = _load_font(int(14 * _scale))
-FONT_ALBUM    = _load_font(int(12 * _scale))
-FONT_CLOCK_LG = _load_font_bold(int(48 * _scale))
-FONT_CLOCK_SM = _load_font(int(14 * _scale))
-FONT_STATUS   = _load_font(int(12 * _scale))
+# Idle screen typography (Apple Watch / Lock screen aesthetic)
+FONT_CLOCK_TIME = _load_font_bold(int(54 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
+FONT_CLOCK_SEC  = _load_font_bold(int(18 * _scale), preferred="SF-Compact-Rounded.ttf")
+FONT_DATE       = _load_font(int(13 * _scale), preferred="SF-Compact-Rounded.ttf")
+FONT_STATUS     = _load_font(int(11 * _scale), preferred="SF-Compact-Rounded.ttf")
+
+# Music screen typography (refined proportions to fit comfortably in 80px bottom strip)
+FONT_TITLE      = _load_font_bold(int(14 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
+FONT_ARTIST     = _load_font(int(12 * _scale), preferred="SF-Compact-Rounded.ttf")
+FONT_ALBUM      = _load_font(int(10 * _scale), preferred="SF-Compact-Rounded.ttf")
 
 
 # =====================================================================
-# TRACK METADATA  (thread-safe container)
+# MARQUEE TEXT ENGINE  (Smooth scrolling with boundary clipping)
+# =====================================================================
+
+class MarqueeText:
+    """
+    Smooth ping-pong marquee scrolling for text that exceeds visible display width.
+    Pauses naturally at start and end for optimal readability.
+    """
+    def __init__(self, pause_start=2.0, pause_end=1.5, scroll_speed=28.0):
+        self.pause_start = pause_start
+        self.pause_end   = pause_end
+        self.speed       = scroll_speed  # pixels per second
+        self._last_text  = ""
+        self._start_time = time.monotonic()
+
+    def get_offset(self, text, text_w, visible_w):
+        if text != self._last_text:
+            self._last_text  = text
+            self._start_time = time.monotonic()
+
+        overflow = text_w - visible_w
+        if overflow <= 0:
+            return 0
+
+        scroll_time = overflow / self.speed
+        total_cycle = self.pause_start + scroll_time + self.pause_end + scroll_time
+
+        elapsed = (time.monotonic() - self._start_time) % total_cycle
+
+        if elapsed < self.pause_start:
+            return 0
+        elif elapsed < self.pause_start + scroll_time:
+            return int((elapsed - self.pause_start) * self.speed)
+        elif elapsed < self.pause_start + scroll_time + self.pause_end:
+            return overflow
+        else:
+            back_elapsed = elapsed - (self.pause_start + scroll_time + self.pause_end)
+            return overflow - int(back_elapsed * self.speed)
+
+
+def draw_marquee_text(canvas, draw, x, y, max_w, text, font, color, marquee):
+    """
+    Draw text with horizontal scrolling if it overflows max_w.
+    Uses Pillow RGBA sub-strip for clean clipping with zero overflow.
+    """
+    if not text:
+        return
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+
+    if tw <= max_w:
+        # Fits: center horizontally within the allotted width
+        tx = x + (max_w - tw) // 2
+        draw.text((tx, y), text, font=font, fill=color)
+    else:
+        # Overflow: calculate offset and clip
+        offset = marquee.get_offset(text, tw, max_w)
+        strip_h = th + 6
+        strip = Image.new("RGBA", (max_w, strip_h), (0, 0, 0, 0))
+        sdraw = ImageDraw.Draw(strip)
+        sdraw.text((-offset, 0), text, font=font, fill=color)
+        canvas.paste(strip, (x, y), strip)
+
+
+# =====================================================================
+# TRACK METADATA  (thread-safe container with instant cache invalidation)
 # =====================================================================
 
 class TrackMeta:
@@ -150,24 +237,41 @@ class TrackMeta:
         self.progress_current = 0.0
         self.progress_end     = 0.0
 
+    def on_track_change(self):
+        """Immediately clear previous track metadata on track skip."""
+        with self._lock:
+            self.title   = ""
+            self.artist  = ""
+            self.album   = ""
+            self.art_img = None
+            self._art_raw = b""
+
     def set_field(self, key, value):
         with self._lock:
             if key == "title":
-                self.title = value
+                if value and value != self.title:
+                    self.title = value
+                    # Invalidate old album art when a new track title arrives
+                    self.art_img = None
+                    self._art_raw = b""
             elif key == "artist":
                 self.artist = value
             elif key == "album":
                 self.album = value
 
     def set_art(self, raw_bytes):
-        """Decode and store album art.  Skips if identical to current."""
+        """Decode and store album art. Skips if identical to current."""
+        if not raw_bytes:
+            return
         with self._lock:
-            if raw_bytes == self._art_raw:
+            if raw_bytes == self._art_raw and self.art_img is not None:
                 return  # same image, skip the decode
             self._art_raw = raw_bytes
             try:
                 self.art_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-            except Exception:
+                print(f"[TFT-META] Decoded album art ({self.art_img.width}x{self.art_img.height})")
+            except Exception as e:
+                print(f"[TFT-META] Art decode error: {e}")
                 self.art_img = None
 
     def set_progress(self, start, current, end):
@@ -241,13 +345,29 @@ def metadata_reader_thread():
     re_data   = re.compile(r'<data encoding="base64">(.*?)</data>', re.DOTALL)
     re_length = re.compile(r'<length>(\d+)</length>')
 
-    # Background D-Bus MPRIS metadata polling fallback
+    # Background D-Bus MPRIS metadata & cover art polling fallback
     def _dbus_poller():
+        art_cache_dir = "/tmp/shairport-sync-art"
         while True:
-            time.sleep(3)
+            time.sleep(2)
             try:
-                # If playing and no title is known yet, query D-Bus MPRIS
-                if display_controller._playing and not track_meta.has_meta():
+                if not display_controller._playing:
+                    continue
+
+                # 1. Check cached cover art directory (/tmp/shairport-sync-art)
+                if track_meta.art_img is None and os.path.exists(art_cache_dir):
+                    art_files = sorted(
+                        [os.path.join(art_cache_dir, f) for f in os.listdir(art_cache_dir)
+                         if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
+                        key=os.path.getmtime, reverse=True
+                    )
+                    if art_files:
+                        with open(art_files[0], "rb") as f:
+                            track_meta.set_art(f.read())
+                            print(f"[TFT-META] Loaded cover art from cache directory ({art_files[0]})")
+
+                # 2. Query D-Bus MPRIS if title or art is missing
+                if not track_meta.title or track_meta.art_img is None:
                     res = subprocess.run(
                         ["dbus-send", "--system", "--print-reply",
                          "--dest=org.mpris.MediaPlayer2.ShairportSync",
@@ -257,15 +377,27 @@ def metadata_reader_thread():
                          "string:Metadata"],
                         capture_output=True, text=True, timeout=2,
                     )
-                    if res.returncode == 0 and "xesam:title" in res.stdout:
-                        m_t = re.search(r'string\s+"xesam:title"\s+variant\s+string\s+"([^"]+)"', res.stdout)
-                        if m_t:
-                            track_meta.set_field("title", m_t.group(1))
-                            print(f"[TFT-META] D-Bus Title: {m_t.group(1)}")
-                        m_a = re.search(r'string\s+"xesam:artist"\s+variant\s+array\s+\[\s+string\s+"([^"]+)"', res.stdout)
-                        if m_a:
-                            track_meta.set_field("artist", m_a.group(1))
-                            print(f"[TFT-META] D-Bus Artist: {m_a.group(1)}")
+                    if res.returncode == 0:
+                        if "xesam:title" in res.stdout and not track_meta.title:
+                            m_t = re.search(r'string\s+"xesam:title"\s+variant\s+string\s+"([^"]+)"', res.stdout)
+                            if m_t:
+                                track_meta.set_field("title", m_t.group(1))
+                                print(f"[TFT-META] D-Bus Title: {m_t.group(1)}")
+                        if "xesam:artist" in res.stdout and not track_meta.artist:
+                            m_a = re.search(r'string\s+"xesam:artist"\s+variant\s+array\s+\[\s+string\s+"([^"]+)"', res.stdout)
+                            if m_a:
+                                track_meta.set_field("artist", m_a.group(1))
+                                print(f"[TFT-META] D-Bus Artist: {m_a.group(1)}")
+                        if "mpris:artUrl" in res.stdout and track_meta.art_img is None:
+                            m_u = re.search(r'string\s+"mpris:artUrl"\s+variant\s+string\s+"([^"]+)"', res.stdout)
+                            if m_u:
+                                url = m_u.group(1)
+                                if url.startswith("file://"):
+                                    fpath = url[7:]
+                                    if os.path.exists(fpath):
+                                        with open(fpath, "rb") as af:
+                                            track_meta.set_art(af.read())
+                                            print(f"[TFT-META] D-Bus loaded art from: {fpath}")
             except Exception:
                 pass
 
@@ -307,16 +439,23 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
     if not m_data:
         # Markers without payload data
         if code_ascii in ("pbeg", "prsm"):
-            print("[TFT-META] AirPlay playback started / active (pbeg)")
+            print("[TFT-META] AirPlay playback active (pbeg/prsm)")
             display_controller.set_playing(True)
             display_controller.set_connected(True)
         elif code_ascii == "pfls":
-            # Stream flushed or cover art start
+            # Stream flushed (track skip / audio flush) — discard old art chunks
+            print("[TFT-META] Stream flushed (pfls)")
             _art_chunks.clear()
-        elif code_ascii == "pfen":
-            # Cover art stream end
+            # Invalidate old artwork so previous album art does not linger
+            track_meta.art_img = None
+        elif code_ascii == "pcst":
+            # Picture stream start
+            print("[TFT-META] Album art stream starting (pcst)...")
+            _art_chunks.clear()
+        elif code_ascii in ("pcen", "pfen"):
+            # Picture stream end — assemble all buffered chunks
             if _art_chunks:
-                print(f"[TFT-META] Chunked cover art assembled ({len(_art_chunks)} bytes)")
+                print(f"[TFT-META] Assembled complete album art ({len(_art_chunks)} bytes)")
                 track_meta.set_art(bytes(_art_chunks))
                 _art_chunks.clear()
                 display_controller.set_playing(True)
@@ -345,14 +484,36 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         album = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Album: {album}")
         track_meta.set_field("album", album)
-    elif code_ascii == "PICT":
-        print(f"[TFT-META] Received Cover Art ({len(raw_data)} bytes)")
-        track_meta.set_art(raw_data)
-        display_controller.set_playing(True)
-        display_controller.set_connected(True)
-    elif code_ascii == "pfmd":
-        # Cover art chunk
+    elif code_ascii in ("PICT", "pfmd"):
+        # Picture payload data — could be a full image or a chunk in a sequence
+        if raw_data.startswith(b'\xff\xd8') or raw_data.startswith(b'\x89PNG'):
+            # Starts with JPEG or PNG magic header — test if complete
+            try:
+                test_img = Image.open(io.BytesIO(raw_data))
+                test_img.verify()
+                print(f"[TFT-META] Received complete single-frame Cover Art ({len(raw_data)} bytes)")
+                track_meta.set_art(raw_data)
+                _art_chunks.clear()
+                display_controller.set_playing(True)
+                display_controller.set_connected(True)
+                return
+            except Exception:
+                # Partial first chunk, fall through to buffer
+                pass
+
+        # Buffer chunk
         _art_chunks.extend(raw_data)
+        # Check if currently buffered data now forms a complete image
+        if len(_art_chunks) > 4096 and (_art_chunks.startswith(b'\xff\xd8') or _art_chunks.startswith(b'\x89PNG')):
+            try:
+                test_img = Image.open(io.BytesIO(_art_chunks))
+                test_img.verify()
+                print(f"[TFT-META] Decoded streamed Cover Art ({len(_art_chunks)} bytes)")
+                track_meta.set_art(bytes(_art_chunks))
+                display_controller.set_playing(True)
+                display_controller.set_connected(True)
+            except Exception:
+                pass
     elif code_ascii == "prgr":
         try:
             parts = raw_data.decode("ascii").split("/")
@@ -436,7 +597,8 @@ class ST7789Backend(DisplayBackend):
     def __init__(self, width, height,
                  spi_port=4, spi_cs=0,
                  dc_pin=24, rst_pin=12, bl_pin=20,
-                 spi_speed_hz=32_000_000):
+                 spi_speed_hz=32_000_000,
+                 bgr_mode=True, invert_color=False):
         super().__init__(width, height)
         self._spi_port     = spi_port
         self._spi_cs       = spi_cs
@@ -444,6 +606,8 @@ class ST7789Backend(DisplayBackend):
         self._rst_pin      = rst_pin
         self._bl_pin       = bl_pin
         self._spi_speed_hz = spi_speed_hz
+        self._bgr_mode     = bgr_mode       # True fixes Red/Blue swap on BGR LCD panels
+        self._invert_color = invert_color   # False uses INVOFF to fix washed-out colors
 
         self._spi          = None
         self._dc           = None
@@ -504,7 +668,7 @@ class ST7789Backend(DisplayBackend):
             self._ready = False
             return
 
-        print(f"[TFT] Initialising ST7789 on /dev/spidev{port}.{cs} (DC={self._dc_pin}, RST={self._rst_pin}, BL={self._bl_pin})...")
+        print(f"[TFT] Initialising ST7789 on /dev/spidev{port}.{cs} (DC={self._dc_pin}, RST={self._rst_pin}, BL={self._bl_pin}, BGR={self._bgr_mode}, Invert={self._invert_color})...")
 
         try:
             # 1. Claim GPIO lines via gpiozero (lgpio)
@@ -539,10 +703,17 @@ class ST7789Backend(DisplayBackend):
             self._write_cmd(self.CMD_COLMOD)
             self._write_data(0x55)  # 16-bit RGB565
 
+            # MADCTL: Bit 3 controls RGB/BGR subpixel mapping (0x08 = BGR, 0x00 = RGB)
+            madctl_val = 0x08 if self._bgr_mode else 0x00
             self._write_cmd(self.CMD_MADCTL)
-            self._write_data(0x00)  # Portrait 240x320
+            self._write_data(madctl_val)
 
-            self._write_cmd(self.CMD_INVON)   # Inversion ON (required for ST7789 IPS panels)
+            # Display Inversion: INVOFF (0x20) fixes washed-out colors on standard LCDs
+            if self._invert_color:
+                self._write_cmd(self.CMD_INVON)
+            else:
+                self._write_cmd(self.CMD_INVOFF)
+
             self._write_cmd(self.CMD_NORON)   # Normal display mode
             time.sleep(0.01)
 
@@ -550,7 +721,7 @@ class ST7789Backend(DisplayBackend):
             time.sleep(0.1)
 
             self._ready = True
-            print(f"[TFT] ST7789 initialised successfully at {self._spi_speed_hz // 1_000_000} MHz!")
+            print(f"[TFT] ST7789 initialised successfully at {self._spi_speed_hz // 1_000_000} MHz (BGR={self._bgr_mode}, Invert={self._invert_color})!")
         except Exception as e:
             print(f"[TFT] ST7789 hardware init error: {e}")
             self._ready = False
@@ -621,44 +792,54 @@ class DisplayRenderer:
         self.w = width
         self.h = height
         self._vis_step = 0.0   # animation phase for visualiser
+        self.title_marquee  = MarqueeText(pause_start=2.0, pause_end=1.5, scroll_speed=26.0)
+        self.artist_marquee = MarqueeText(pause_start=2.0, pause_end=1.5, scroll_speed=22.0)
+        self.album_marquee  = MarqueeText(pause_start=2.5, pause_end=1.5, scroll_speed=20.0)
 
     # ----- Mode 0: Album Art + Track Info -----
 
     def render_art_info(self, meta, cava_vals):
         """
-        Top portion: album art (square, centered).
-        Bottom portion: title, artist, album, and a progress bar.
+        Top portion: album art (240x240 square).
+        Bottom portion (80px strip): title, artist, album with marquee clipping, plus progress bar.
         """
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
-        # Layout: art is a perfect square at the top, info fills the remaining bottom strip
+        # Layout: art is a perfect square at the top (0..240)
         art_h = self.w
-        info_y = art_h + int(8 * _scale)
-
         if meta["art"]:
-            # Resize art to fill width, cropping to square if needed
             art = self._fit_square(meta["art"], self.w, art_h)
             img.paste(art, (0, 0))
         else:
-            # No art → show mini visualiser in the art area
             self._draw_mini_vis(draw, 0, 0, self.w, art_h, cava_vals)
 
-        # Track info
-        self._draw_text_centered(draw, info_y, meta["title"] or "Unknown Title",
-                                 FONT_TITLE, TEXT_PRIMARY)
-        self._draw_text_centered(draw, info_y + int(22 * _scale),
-                                 meta["artist"] or "Unknown Artist",
-                                 FONT_ARTIST, TEXT_SECONDARY)
-        self._draw_text_centered(draw, info_y + int(40 * _scale),
-                                 meta["album"] or "",
-                                 FONT_ALBUM, TEXT_SECONDARY)
+        # Bottom info strip (y = 240..320)
+        max_w = self.w - int(20 * _scale)   # 220px max width with 10px margins
+        margin_x = int(10 * _scale)
+        info_y = art_h + int(5 * _scale)    # y = 245
 
-        # Progress bar
-        bar_y = self.h - int(14 * _scale)
-        bar_h = int(4 * _scale)
-        margin = int(12 * _scale)
-        self._draw_progress_bar(draw, margin, bar_y, self.w - 2 * margin,
+        # Title: 14pt SF Pro Rounded Bold with marquee
+        draw_marquee_text(img, draw, margin_x, info_y, max_w,
+                          meta["title"] or "AirPlay Audio",
+                          FONT_TITLE, TEXT_PRIMARY, self.title_marquee)
+
+        # Artist: 12pt SF Compact Rounded with marquee
+        draw_marquee_text(img, draw, margin_x, info_y + int(20 * _scale), max_w,
+                          meta["artist"] or "AirPlay Receiver",
+                          FONT_ARTIST, TEXT_SECONDARY, self.artist_marquee)
+
+        # Album: 10pt SF Compact Rounded with marquee (only if present)
+        album_text = meta.get("album") or ""
+        if album_text:
+            draw_marquee_text(img, draw, margin_x, info_y + int(36 * _scale), max_w,
+                              album_text, FONT_ALBUM, (110, 110, 130), self.album_marquee)
+
+        # Progress bar at very bottom
+        bar_y = self.h - int(10 * _scale)
+        bar_h = int(3 * _scale)
+        bar_margin = int(12 * _scale)
+        self._draw_progress_bar(draw, bar_margin, bar_y, self.w - 2 * bar_margin,
                                 bar_h, meta)
 
         return img
@@ -673,16 +854,18 @@ class DisplayRenderer:
             art = self._fit_square(meta["art"], self.w, self.h)
             img.paste(art, (0, 0))
         else:
-            # Fallback: info + mini vis (same as Mode 0 without art)
             draw = ImageDraw.Draw(img)
-            vis_h = int(self.h * 0.5)
+            vis_h = int(self.h * 0.55)
             self._draw_mini_vis(draw, 0, 0, self.w, vis_h, cava_vals)
-            info_y = vis_h + int(20 * _scale)
-            self._draw_text_centered(draw, info_y, meta["title"] or "No Track",
-                                     FONT_TITLE, TEXT_PRIMARY)
-            self._draw_text_centered(draw, info_y + int(24 * _scale),
-                                     meta["artist"] or "",
-                                     FONT_ARTIST, TEXT_SECONDARY)
+            max_w = self.w - int(20 * _scale)
+            margin_x = int(10 * _scale)
+            info_y = vis_h + int(16 * _scale)
+            draw_marquee_text(img, draw, margin_x, info_y, max_w,
+                              meta["title"] or "AirPlay Audio",
+                              FONT_TITLE, TEXT_PRIMARY, self.title_marquee)
+            draw_marquee_text(img, draw, margin_x, info_y + int(22 * _scale), max_w,
+                              meta["artist"] or "",
+                              FONT_ARTIST, TEXT_SECONDARY, self.artist_marquee)
 
         return img
 
@@ -728,46 +911,82 @@ class DisplayRenderer:
 
     def render_clock(self, mode_str, connected):
         """
-        Elegant clock / status screen for idle state.
-        Shows: large time, date, connection mode, Wi-Fi info.
+        Apple StandBy / Lock Screen aesthetic using SF Pro Rounded fonts.
+        Shows: Top status capsule pill, large rounded time, seconds pill,
+        day & date, audio mode indicator, and Wi-Fi connection info.
         """
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
         now = datetime.now()
 
-        # Time — large, centered
+        # 1. Top Status Capsule Pill
+        status_text = "AirPlay Ready" if connected else "Sandy AirPlay"
+        pill_w = int(136 * _scale)
+        pill_h = int(22 * _scale)
+        pill_x = (self.w - pill_w) // 2
+        pill_y = int(20 * _scale)
+        draw.rounded_rectangle([pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+                               radius=pill_h // 2,
+                               fill=(18, 22, 36), outline=(42, 50, 75), width=1)
+        # Dot indicator
+        dot_color = (0, 230, 120) if connected else (120, 130, 155)
+        dot_r = int(3 * _scale)
+        dot_cx = pill_x + int(14 * _scale)
+        dot_cy = pill_y + pill_h // 2
+        draw.ellipse([dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r], fill=dot_color)
+        draw.text((pill_x + int(24 * _scale), pill_y + int(4 * _scale)),
+                  status_text, font=FONT_STATUS, fill=(235, 235, 245))
+
+        # 2. Large Time in SF Pro Rounded Bold
         time_str = now.strftime("%H:%M")
-        self._draw_text_centered(draw, int(self.h * 0.25), time_str,
-                                 FONT_CLOCK_LG, TEXT_PRIMARY)
+        self._draw_text_centered(draw, int(66 * _scale), time_str,
+                                 FONT_CLOCK_TIME, (255, 255, 255))
 
-        # Seconds — smaller, below time
+        # 3. Seconds Badge (clean modern pill)
         sec_str = now.strftime(":%S")
-        self._draw_text_centered(draw, int(self.h * 0.25) + int(52 * _scale),
-                                 sec_str, FONT_CLOCK_SM, TEXT_SECONDARY)
+        sec_pill_w = int(46 * _scale)
+        sec_pill_h = int(18 * _scale)
+        sec_pill_x = (self.w - sec_pill_w) // 2
+        sec_pill_y = int(142 * _scale)
+        draw.rounded_rectangle([sec_pill_x, sec_pill_y, sec_pill_x + sec_pill_w, sec_pill_y + sec_pill_h],
+                               radius=sec_pill_h // 2,
+                               fill=(26, 28, 48))
+        self._draw_text_centered(draw, sec_pill_y + int(2 * _scale), sec_str,
+                                 FONT_CLOCK_SEC, (140, 135, 230))
 
-        # Date
+        # 4. Date & Day (e.g. Tuesday, 13 October) in SF Compact Rounded
         date_str = now.strftime("%A, %d %B")
-        self._draw_text_centered(draw, int(self.h * 0.60), date_str,
-                                 FONT_ARTIST, TEXT_SECONDARY)
+        self._draw_text_centered(draw, int(176 * _scale), date_str,
+                                 FONT_DATE, (210, 215, 230))
 
-        # Divider line
-        div_y = int(self.h * 0.72)
-        margin = int(40 * _scale)
+        # 5. Soft Accent Divider Line
+        div_y = int(214 * _scale)
+        margin = int(45 * _scale)
         draw.line([(margin, div_y), (self.w - margin, div_y)],
-                  fill=ACCENT_COLOR, width=1)
+                  fill=(36, 42, 65), width=1)
 
-        # Mode status
-        status = f"{'●' if connected else '○'}  {mode_str}"
-        self._draw_text_centered(draw, int(self.h * 0.78), status,
-                                 FONT_STATUS, ACCENT_COLOR)
+        # 6. Audio Mode Pill
+        mode_label = f"Mode: {mode_str}"
+        mode_pill_w = int(150 * _scale)
+        mode_pill_h = int(22 * _scale)
+        mode_pill_x = (self.w - mode_pill_w) // 2
+        mode_pill_y = int(232 * _scale)
+        draw.rounded_rectangle([mode_pill_x, mode_pill_y, mode_pill_x + mode_pill_w, mode_pill_y + mode_pill_h],
+                               radius=mode_pill_h // 2,
+                               fill=(20, 24, 38))
+        self._draw_text_centered(draw, mode_pill_y + int(4 * _scale), mode_label,
+                                 FONT_STATUS, (150, 165, 220))
 
-        # Wi-Fi SSID
+        # 7. Wi-Fi SSID
         ssid = self._get_wifi_ssid()
-        if ssid:
-            wifi_str = f"Wi-Fi: {ssid}"
-            self._draw_text_centered(draw, int(self.h * 0.88), wifi_str,
-                                     FONT_STATUS, TEXT_SECONDARY)
+        wifi_str = f"Wi-Fi: {ssid}" if ssid else "Wi-Fi: Connected"
+        self._draw_text_centered(draw, int(268 * _scale), wifi_str,
+                                 FONT_STATUS, (120, 125, 145))
+
+        # 8. Subtle Brand Footer
+        self._draw_text_centered(draw, int(298 * _scale), "Sandy's AirPlay Device",
+                                 _load_font(max(8, int(9 * _scale))), (70, 75, 100))
 
         return img
 

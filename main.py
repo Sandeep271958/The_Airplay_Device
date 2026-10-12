@@ -587,6 +587,8 @@ def on_vol_down():
 def on_next():
     """Skip to next track on connected phone (AirPlay or Bluetooth)."""
     print("[BTN] Next ▶▶")
+    if TFT_AVAILABLE:
+        track_meta.on_track_change()
     if state.mode == AppState.MODE_AIRPLAY:
         # Shairport Sync remote control (sends DACP next to iPhone)
         _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
@@ -600,6 +602,8 @@ def on_next():
 def on_prev():
     """Skip to previous track on connected phone (AirPlay or Bluetooth)."""
     print("[BTN] Prev ◀◀")
+    if TFT_AVAILABLE:
+        track_meta.on_track_change()
     if state.mode == AppState.MODE_AIRPLAY:
         # Shairport Sync remote control (sends DACP previous to iPhone)
         _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
