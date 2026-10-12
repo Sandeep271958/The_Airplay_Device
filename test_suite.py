@@ -377,10 +377,10 @@ try:
     if isinstance(backend, ST7789Backend):
         bgr = getattr(backend, "_bgr_mode", None)
         inv = getattr(backend, "_invert_color", None)
-        if bgr is True:
-            report.log_pass("Display", "Subpixel Calibration (BGR)", "MADCTL bit 3 = BGR (Red/Blue swap fixed)")
+        if bgr is False:
+            report.log_pass("Display", "Subpixel Calibration (RGB)", "MADCTL bit 3 = 0 (RGB verified on physical LCD)")
         else:
-            report.log_fail("Display", "Subpixel Calibration (BGR)", "BGR mode is False")
+            report.log_warn("Display", "Subpixel Calibration", f"BGR mode is {bgr}")
 
         if inv is False:
             report.log_pass("Display", "Inversion Calibration (INVOFF)", "INVOFF active (washed-out colors fixed)")

@@ -36,7 +36,8 @@ import subprocess
 from datetime import datetime
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance, ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # =====================================================================
 # CONFIGURATION
@@ -60,24 +61,26 @@ SPLASH_LOGO     = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 SPLASH_DURATION = 3.0  # total seconds for the boot animation
 SPLASH_FPS      = 30   # smooth animation during splash
 
-# Colour palette (dark theme)
-BG_COLOR        = (10, 10, 18)        # near-black with a hint of blue
-TEXT_PRIMARY     = (230, 230, 235)     # off-white
-TEXT_SECONDARY   = (140, 140, 160)     # muted grey-purple
-ACCENT_COLOR     = (100, 80, 220)     # subtle purple accent
-PROGRESS_BG      = (40, 40, 55)       # progress bar background
-PROGRESS_FG      = (100, 80, 220)     # progress bar fill
+# Colour palette (Apple Light Theme — optimal high contrast & readability on TFT)
+BG_COLOR         = (248, 249, 252)     # clean, bright off-white background
+TEXT_PRIMARY     = (18, 20, 28)        # deep inky black/slate for maximum sharpness
+TEXT_SECONDARY   = (90, 95, 115)       # refined charcoal grey
+ACCENT_COLOR     = (0, 122, 255)       # vibrant Apple AirPlay Blue
+PROGRESS_BG      = (225, 228, 238)     # light grey track
+PROGRESS_FG      = (0, 122, 255)       # bright iOS Blue fill
+CARD_BG          = (255, 255, 255)     # pure white pill/card fill
+CARD_BORDER      = (218, 224, 236)     # subtle soft border
 
-# Visualiser bar gradient (same palette as the LED matrix for consistency)
+# Visualiser bar gradient (vibrant saturated spectrum optimized for white background)
 VIS_GRADIENT = [
-    (0,   200, 0),     # bottom — green
-    (50,  230, 0),
-    (120, 255, 0),
-    (200, 255, 0),     # mid — yellow
-    (255, 200, 0),
-    (255, 120, 0),
-    (255, 50,  0),
-    (255, 0,   0),     # top — red
+    (0,   180, 70),     # bottom — rich emerald green
+    (30,  200, 50),
+    (100, 210, 20),
+    (200, 190, 0),     # mid — warm amber yellow
+    (240, 140, 0),     # orange
+    (245, 90,  10),
+    (235, 40,  30),     # top — punchy crimson red
+    (220, 10,  60),
 ]
 
 
@@ -311,8 +314,9 @@ class TrackMeta:
 
 track_meta = TrackMeta()
 
-# Buffer for chunked cover art (ssnc pfmd)
+# Buffer for chunked cover art (ssnc PICT / pcst / pcen)
 _art_chunks = bytearray()
+_in_picture_stream = False
 
 
 # =====================================================================
@@ -424,7 +428,7 @@ def metadata_reader_thread():
 
 def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
     """Parse a single metadata <item> and update track_meta."""
-    global _art_chunks
+    global _art_chunks, _in_picture_stream
     m_code = re_code.search(xml_text)
     if not m_code:
         return
@@ -445,15 +449,19 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         elif code_ascii == "pfls":
             # Stream flushed (track skip / audio flush) — discard old art chunks
             print("[TFT-META] Stream flushed (pfls)")
+            _in_picture_stream = False
             _art_chunks.clear()
             # Invalidate old artwork so previous album art does not linger
             track_meta.art_img = None
         elif code_ascii == "pcst":
             # Picture stream start
             print("[TFT-META] Album art stream starting (pcst)...")
+            _in_picture_stream = True
             _art_chunks.clear()
+            track_meta.art_img = None
         elif code_ascii in ("pcen", "pfen"):
             # Picture stream end — assemble all buffered chunks
+            _in_picture_stream = False
             if _art_chunks:
                 print(f"[TFT-META] Assembled complete album art ({len(_art_chunks)} bytes)")
                 track_meta.set_art(bytes(_art_chunks))
@@ -485,35 +493,24 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         print(f"[TFT-META] Album: {album}")
         track_meta.set_field("album", album)
     elif code_ascii in ("PICT", "pfmd"):
-        # Picture payload data — could be a full image or a chunk in a sequence
-        if raw_data.startswith(b'\xff\xd8') or raw_data.startswith(b'\x89PNG'):
-            # Starts with JPEG or PNG magic header — test if complete
-            try:
-                test_img = Image.open(io.BytesIO(raw_data))
-                test_img.verify()
-                print(f"[TFT-META] Received complete single-frame Cover Art ({len(raw_data)} bytes)")
-                track_meta.set_art(raw_data)
-                _art_chunks.clear()
-                display_controller.set_playing(True)
-                display_controller.set_connected(True)
-                return
-            except Exception:
-                # Partial first chunk, fall through to buffer
-                pass
-
-        # Buffer chunk
+        # Picture payload data — could be a chunk in a sequence or standalone image
         _art_chunks.extend(raw_data)
-        # Check if currently buffered data now forms a complete image
-        if len(_art_chunks) > 4096 and (_art_chunks.startswith(b'\xff\xd8') or _art_chunks.startswith(b'\x89PNG')):
-            try:
-                test_img = Image.open(io.BytesIO(_art_chunks))
-                test_img.verify()
-                print(f"[TFT-META] Decoded streamed Cover Art ({len(_art_chunks)} bytes)")
-                track_meta.set_art(bytes(_art_chunks))
-                display_controller.set_playing(True)
-                display_controller.set_connected(True)
-            except Exception:
-                pass
+
+        if not _in_picture_stream:
+            # Standalone single-frame picture without pcst/pcen:
+            # Check if current buffer can be fully loaded (pixels decoded)
+            if _art_chunks.startswith(b'\xff\xd8') or _art_chunks.startswith(b'\x89PNG'):
+                try:
+                    test_img = Image.open(io.BytesIO(bytes(_art_chunks)))
+                    test_img.load()  # Strictly verifies the complete image is present
+                    print(f"[TFT-META] Received complete single-frame Cover Art ({len(_art_chunks)} bytes)")
+                    track_meta.set_art(bytes(_art_chunks))
+                    _art_chunks.clear()
+                    display_controller.set_playing(True)
+                    display_controller.set_connected(True)
+                except Exception:
+                    # Partial data, wait for remaining chunks or pcen
+                    pass
     elif code_ascii == "prgr":
         try:
             parts = raw_data.decode("ascii").split("/")
@@ -598,7 +595,7 @@ class ST7789Backend(DisplayBackend):
                  spi_port=4, spi_cs=0,
                  dc_pin=24, rst_pin=12, bl_pin=20,
                  spi_speed_hz=32_000_000,
-                 bgr_mode=True, invert_color=False):
+                 bgr_mode=False, invert_color=False):
         super().__init__(width, height)
         self._spi_port     = spi_port
         self._spi_cs       = spi_cs
@@ -606,7 +603,7 @@ class ST7789Backend(DisplayBackend):
         self._rst_pin      = rst_pin
         self._bl_pin       = bl_pin
         self._spi_speed_hz = spi_speed_hz
-        self._bgr_mode     = bgr_mode       # True fixes Red/Blue swap on BGR LCD panels
+        self._bgr_mode     = bgr_mode       # False = RGB mode (visually confirmed on physical LCD)
         self._invert_color = invert_color   # False uses INVOFF to fix washed-out colors
 
         self._spi          = None
@@ -922,71 +919,78 @@ class DisplayRenderer:
 
         # 1. Top Status Capsule Pill
         status_text = "AirPlay Ready" if connected else "Sandy AirPlay"
-        pill_w = int(136 * _scale)
-        pill_h = int(22 * _scale)
+        pill_w = int(140 * _scale)
+        pill_h = int(24 * _scale)
         pill_x = (self.w - pill_w) // 2
-        pill_y = int(20 * _scale)
+        pill_y = int(18 * _scale)
         draw.rounded_rectangle([pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
                                radius=pill_h // 2,
-                               fill=(18, 22, 36), outline=(42, 50, 75), width=1)
+                               fill=CARD_BG, outline=CARD_BORDER, width=1)
         # Dot indicator
-        dot_color = (0, 230, 120) if connected else (120, 130, 155)
+        dot_color = (0, 185, 85) if connected else (150, 155, 170)
         dot_r = int(3 * _scale)
         dot_cx = pill_x + int(14 * _scale)
         dot_cy = pill_y + pill_h // 2
         draw.ellipse([dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r], fill=dot_color)
-        draw.text((pill_x + int(24 * _scale), pill_y + int(4 * _scale)),
-                  status_text, font=FONT_STATUS, fill=(235, 235, 245))
+        draw.text((pill_x + int(24 * _scale), pill_y + int(5 * _scale)),
+                  status_text, font=FONT_STATUS, fill=(30, 35, 50))
 
-        # 2. Large Time in SF Pro Rounded Bold
+        # 2. Large Time in SF Pro Rounded Bold (deep inky black for razor-sharp readability)
         time_str = now.strftime("%H:%M")
-        self._draw_text_centered(draw, int(66 * _scale), time_str,
-                                 FONT_CLOCK_TIME, (255, 255, 255))
+        self._draw_text_centered(draw, int(58 * _scale), time_str,
+                                 FONT_CLOCK_TIME, (18, 20, 28))
 
-        # 3. Seconds Badge (clean modern pill)
+        # 3. Seconds Badge (clean modern light blue pill)
         sec_str = now.strftime(":%S")
-        sec_pill_w = int(46 * _scale)
-        sec_pill_h = int(18 * _scale)
+        sec_pill_w = int(48 * _scale)
+        sec_pill_h = int(20 * _scale)
         sec_pill_x = (self.w - sec_pill_w) // 2
-        sec_pill_y = int(142 * _scale)
+        sec_pill_y = int(136 * _scale)
         draw.rounded_rectangle([sec_pill_x, sec_pill_y, sec_pill_x + sec_pill_w, sec_pill_y + sec_pill_h],
                                radius=sec_pill_h // 2,
-                               fill=(26, 28, 48))
-        self._draw_text_centered(draw, sec_pill_y + int(2 * _scale), sec_str,
-                                 FONT_CLOCK_SEC, (140, 135, 230))
+                               fill=(232, 240, 255), outline=(200, 218, 250), width=1)
+        self._draw_text_centered(draw, sec_pill_y + int(3 * _scale), sec_str,
+                                 FONT_CLOCK_SEC, (0, 110, 240))
 
         # 4. Date & Day (e.g. Tuesday, 13 October) in SF Compact Rounded
         date_str = now.strftime("%A, %d %B")
-        self._draw_text_centered(draw, int(176 * _scale), date_str,
-                                 FONT_DATE, (210, 215, 230))
+        self._draw_text_centered(draw, int(172 * _scale), date_str,
+                                 FONT_DATE, (75, 82, 102))
 
         # 5. Soft Accent Divider Line
-        div_y = int(214 * _scale)
+        div_y = int(210 * _scale)
         margin = int(45 * _scale)
         draw.line([(margin, div_y), (self.w - margin, div_y)],
-                  fill=(36, 42, 65), width=1)
+                  fill=(220, 225, 238), width=1)
 
         # 6. Audio Mode Pill
         mode_label = f"Mode: {mode_str}"
         mode_pill_w = int(150 * _scale)
-        mode_pill_h = int(22 * _scale)
+        mode_pill_h = int(24 * _scale)
         mode_pill_x = (self.w - mode_pill_w) // 2
-        mode_pill_y = int(232 * _scale)
+        mode_pill_y = int(228 * _scale)
         draw.rounded_rectangle([mode_pill_x, mode_pill_y, mode_pill_x + mode_pill_w, mode_pill_y + mode_pill_h],
                                radius=mode_pill_h // 2,
-                               fill=(20, 24, 38))
-        self._draw_text_centered(draw, mode_pill_y + int(4 * _scale), mode_label,
-                                 FONT_STATUS, (150, 165, 220))
+                               fill=CARD_BG, outline=CARD_BORDER, width=1)
+        self._draw_text_centered(draw, mode_pill_y + int(5 * _scale), mode_label,
+                                 FONT_STATUS, (70, 75, 95))
 
         # 7. Wi-Fi SSID
         ssid = self._get_wifi_ssid()
         wifi_str = f"Wi-Fi: {ssid}" if ssid else "Wi-Fi: Connected"
-        self._draw_text_centered(draw, int(268 * _scale), wifi_str,
-                                 FONT_STATUS, (120, 125, 145))
+        wifi_pill_w = int(160 * _scale)
+        wifi_pill_h = int(24 * _scale)
+        wifi_pill_x = (self.w - wifi_pill_w) // 2
+        wifi_pill_y = int(260 * _scale)
+        draw.rounded_rectangle([wifi_pill_x, wifi_pill_y, wifi_pill_x + wifi_pill_w, wifi_pill_y + wifi_pill_h],
+                               radius=wifi_pill_h // 2,
+                               fill=CARD_BG, outline=CARD_BORDER, width=1)
+        self._draw_text_centered(draw, wifi_pill_y + int(5 * _scale), wifi_str,
+                                 FONT_STATUS, (90, 95, 115))
 
         # 8. Subtle Brand Footer
         self._draw_text_centered(draw, int(298 * _scale), "Sandy's AirPlay Device",
-                                 _load_font(max(8, int(9 * _scale))), (70, 75, 100))
+                                 _load_font(max(8, int(9 * _scale))), (155, 160, 180))
 
         return img
 
@@ -1205,9 +1209,9 @@ def render_splash_frame(width, height, logo_img, progress, glow_phase):
         enhancer = ImageEnhance.Brightness(logo_frame)
         logo_frame = enhancer.enhance(brightness)
 
-        # Center the logo vertically (slightly above center to leave room for text below)
+        # Center the logo vertically in the EXACT center of the screen
         lx = (width - logo_frame.size[0]) // 2
-        ly = int(height * 0.30) - logo_frame.size[1] // 2
+        ly = (height - logo_frame.size[1]) // 2
         frame.paste(logo_frame, (lx, ly))
 
         # "Designed by" text — tiny, just above the logo
@@ -1304,17 +1308,19 @@ class DisplayController:
             # No logo file — show a simple text-only splash instead
             frame = Image.new("RGB", (self.w, self.h), (0, 0, 0))
             draw = ImageDraw.Draw(frame)
-            # "Sandy" in large text
+            # "Sandy" in large text (centered vertically in display)
             sandy_font = _load_font_bold(int(42 * _scale))
             bbox = draw.textbbox((0, 0), "Sandy", font=sandy_font)
             tw = bbox[2] - bbox[0]
-            draw.text(((self.w - tw) // 2, int(self.h * 0.35)),
+            th = bbox[3] - bbox[1]
+            sandy_y = (self.h - th) // 2
+            draw.text(((self.w - tw) // 2, sandy_y),
                       "Sandy", font=sandy_font, fill=(255, 255, 255))
             # "Designed by" above
             designed_font = _load_font(max(8, int(9 * _scale)))
             bbox2 = draw.textbbox((0, 0), "Designed by", font=designed_font)
             tw2 = bbox2[2] - bbox2[0]
-            draw.text(((self.w - tw2) // 2, int(self.h * 0.35) - int(16 * _scale)),
+            draw.text(((self.w - tw2) // 2, sandy_y - int(16 * _scale)),
                       "Designed by", font=designed_font, fill=(180, 180, 180))
             self.backend.show(frame)
             time.sleep(SPLASH_DURATION)
@@ -1409,7 +1415,7 @@ class DisplayController:
 # =====================================================================
 
 # Singleton instances — created when this module is imported
-display_controller = DisplayController(backend=ST7789Backend(DISPLAY_WIDTH, DISPLAY_HEIGHT))
+display_controller = DisplayController(backend=ST7789Backend(DISPLAY_WIDTH, DISPLAY_HEIGHT, bgr_mode=False, invert_color=False))
 
 
 def start_display_threads():

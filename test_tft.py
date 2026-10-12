@@ -22,10 +22,10 @@ from gpiozero import OutputDevice
 
 # --- CLI Options ---
 parser = argparse.ArgumentParser(description="ST7789 TFT Color Calibration & Hardware Diagnostic")
-parser.add_argument("--bgr", dest="bgr", action="store_true", default=True,
-                    help="Use BGR subpixel ordering (fixes Red/Blue swap, default: True)")
-parser.add_argument("--rgb", dest="bgr", action="store_false",
-                    help="Use RGB subpixel ordering")
+parser.add_argument("--rgb", dest="bgr", action="store_false", default=False,
+                    help="Use RGB subpixel ordering (verified for this LCD panel, default: True)")
+parser.add_argument("--bgr", dest="bgr", action="store_true",
+                    help="Use BGR subpixel ordering")
 parser.add_argument("--invoff", dest="invert", action="store_false", default=False,
                     help="Disable display inversion (fixes washed-out contrast, default: False)")
 parser.add_argument("--invon", dest="invert", action="store_true",
@@ -221,43 +221,44 @@ try:
         show_image(card)
         time.sleep(1.2)
 
-    # Rich Calibration & Typography Test Card
-    print("      → Displaying Typography & Marquee Test Card...")
+    # Rich Calibration & Typography Test Card (Apple Light Theme)
+    print("      → Displaying Typography & Marquee Test Card (Apple Light Theme)...")
     font_title = load_font(22, bold=True)
     font_med   = load_font(14, bold=True)
     font_body  = load_font(12, bold=False)
     font_time  = load_font(48, bold=True)
 
-    base = Image.new("RGB", (WIDTH, HEIGHT), color=(12, 14, 24))
+    base = Image.new("RGB", (WIDTH, HEIGHT), color=(248, 249, 252))
     draw = ImageDraw.Draw(base)
 
     # Header Card
-    draw.rounded_rectangle([10, 10, WIDTH - 10, 50], radius=8, fill=(22, 28, 48), outline=(48, 60, 95), width=1)
+    draw.rounded_rectangle([10, 10, WIDTH - 10, 50], radius=8, fill=(255, 255, 255), outline=(218, 224, 236), width=1)
     bbox = draw.textbbox((0, 0), "SANDY'S AIRPLAY", font=font_title)
     tw = bbox[2] - bbox[0]
-    draw.text(((WIDTH - tw) // 2, 18), "SANDY'S AIRPLAY", font=font_title, fill=(255, 255, 255))
+    draw.text(((WIDTH - tw) // 2, 18), "SANDY'S AIRPLAY", font=font_title, fill=(18, 20, 28))
 
     # SF Pro Rounded Time Preview
-    draw.text((36, 60), "12:45", font=font_time, fill=(255, 255, 255))
-    draw.rounded_rectangle([165, 82, 215, 104], radius=11, fill=(30, 32, 56))
-    draw.text((176, 85), ":30", font=font_med, fill=(140, 135, 230))
-    draw.text((36, 118), "Tuesday, 13 October", font=font_body, fill=(200, 205, 225))
+    draw.text((36, 60), "12:45", font=font_time, fill=(18, 20, 28))
+    draw.rounded_rectangle([165, 82, 215, 104], radius=11, fill=(232, 240, 255), outline=(200, 218, 250), width=1)
+    draw.text((176, 85), ":30", font=font_med, fill=(0, 110, 240))
+    draw.text((36, 118), "Tuesday, 13 October", font=font_body, fill=(75, 82, 102))
 
-    # Color swatches: Red, Orange, Yellow, Green, Cyan, Blue, Magenta, White
+    # Color swatches: Red, Orange, Yellow, Green, Cyan, Blue, Magenta, Black
     swatches = [
-        (255, 0, 0), (255, 130, 0), (255, 220, 0), (0, 220, 50),
-        (0, 210, 255), (0, 80, 255), (200, 0, 255), (255, 255, 255)
+        (255, 0, 0), (255, 130, 0), (255, 220, 0), (0, 200, 60),
+        (0, 190, 255), (0, 80, 255), (200, 0, 255), (20, 20, 25)
     ]
     sw_w = (WIDTH - 24) // len(swatches)
     for i, sc in enumerate(swatches):
         draw.rounded_rectangle([12 + i * sw_w, 145, 12 + (i + 1) * sw_w - 2, 175], radius=3, fill=sc)
 
     # Active Hardware Badges
-    draw.rounded_rectangle([12, 186, WIDTH - 12, 214], radius=6, fill=(18, 55, 35))
-    draw.text((22, 192), "COLOR CALIBRATION: OK (BGR)", font=font_body, fill=(0, 255, 140))
+    mode_label = "RGB" if not args.bgr else "BGR"
+    draw.rounded_rectangle([12, 186, WIDTH - 12, 214], radius=6, fill=(235, 250, 240), outline=(180, 230, 200), width=1)
+    draw.text((22, 192), f"COLOR CALIBRATION: OK ({mode_label})", font=font_body, fill=(0, 160, 70))
 
-    draw.rounded_rectangle([12, 222, WIDTH - 12, 250], radius=6, fill=(24, 32, 55))
-    draw.text((22, 228), "TYPOGRAPHY: SF PRO ROUNDED", font=font_body, fill=(120, 200, 255))
+    draw.rounded_rectangle([12, 222, WIDTH - 12, 250], radius=6, fill=(240, 244, 255), outline=(200, 215, 245), width=1)
+    draw.text((22, 228), "TYPOGRAPHY: SF PRO ROUNDED (LIGHT)", font=font_body, fill=(0, 100, 220))
 
     # Marquee simulation across bottom strip
     print("      → Demonstrating smooth Marquee text clipping for 6 seconds...")
@@ -276,9 +277,9 @@ try:
         offset = shift - clip_w
 
         frame = base.copy()
-        strip = Image.new("RGBA", (clip_w, clip_h), (20, 24, 40, 255))
+        strip = Image.new("RGBA", (clip_w, clip_h), (255, 255, 255, 255))
         sdraw = ImageDraw.Draw(strip)
-        sdraw.text((-offset, 10), marquee_msg, font=font_med, fill=(255, 230, 100))
+        sdraw.text((-offset, 10), marquee_msg, font=font_med, fill=(18, 20, 28))
         frame.paste(strip.convert("RGB"), (clip_x, clip_y))
         show_image(frame)
         time.sleep(0.03)
