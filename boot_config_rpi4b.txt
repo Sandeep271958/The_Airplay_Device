@@ -12,6 +12,11 @@ dtparam=audio=on
 # Uncomment the line below once you connect the PCM5102A:
 # dtoverlay=hifiberry-dac
 
+# Free GPIO 16 & 17 from Bluetooth UART hardware flow control (CTS/RTS).
+# Moves BT to the mini UART — BT still works, just without HW flow control.
+# Required because our joystick uses GPIO 16 (Vol Up) and GPIO 17 (Vol Down).
+dtoverlay=miniuart-bt
+
 # Enable SPI interface (used by WS2812 LED driver on GPIO 10)
 dtparam=spi=on
 

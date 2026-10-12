@@ -2,7 +2,7 @@
 """
 AirPlay / Bluetooth Audio Receiver & Visualizer Controller
 ===========================================================
-Raspberry Pi Zero 2W
+Raspberry Pi (auto-detected at runtime)
 
 Hardware:
   - PCM5102A I2S DAC          → audio output to 2.1 speakers
@@ -551,9 +551,15 @@ def cleanup(sig=None, frame=None):
 # =====================================================================
 
 if __name__ == "__main__":
+    # Detect board model for banner
+    try:
+        _pi_model = open("/proc/device-tree/model").read().strip('\x00').strip()
+    except Exception:
+        _pi_model = "Raspberry Pi"
+
     print("=" * 58)
     print("  AirPlay / Bluetooth Audio Receiver & Visualiser")
-    print("  Raspberry Pi Zero 2W")
+    print(f"  {_pi_model}")
     print("=" * 58)
 
     # Catch SIGTERM (from systemd stop) and SIGINT (Ctrl+C)
