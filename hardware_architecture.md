@@ -45,16 +45,18 @@ Because hardware SPI0 is used by the WS2812 LED driver to avoid audio interferen
 
 Add `dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1` to `/boot/firmware/config.txt` to create `/dev/spidev1.0`.
 
-| TFT Pin | RPi Zero 2W Pin | Purpose |
-|:---:|:---|:---|
-| VCC | 3.3V (Pin 1) or 5V (Pin 4) | Power (check display rating) |
-| GND | GND (Pin 9) | Ground |
-| SCL / SCK | GPIO 5 (Pin 29) | SPI1 Clock |
-| SDA / MOSI | GPIO 6 (Pin 31) | SPI1 Data In |
-| RES / RST | GPIO 12 (Pin 32) | Reset |
-| DC | GPIO 24 (Pin 18) | Data/Command |
-| CS | GPIO 25 (Pin 22) | Chip Select (CS0) |
-| BLK | GPIO 20 (Pin 38) | Backlight control |
+| TFT Module Pin | Purpose / Function | RPi GPIO | Physical Pin # | Wire Color |
+|:---:|:---|:---|:---:|:---:|
+| **VCC** | 3.3V Power (or 5V if board has 3.3V regulator) | 3V3 | Pin 1 | **Red** |
+| **GND** | Ground | GND | Pin 6 | **Brown** |
+| **CS** | Chip Select (Bus 1) | GPIO 25 | Pin 22 | **Orange** |
+| **RESET** | Display Reset | GPIO 12 | Pin 32 | **Yellow** |
+| **DC** | Data / Command | GPIO 24 | Pin 18 | **Green** |
+| **SDI (MOSI)** | Serial Data In | GPIO 6 | Pin 31 | **Blue** |
+| **SCK** | Serial Clock | GPIO 5 | Pin 29 | **Purple** |
+| **LED** | Backlight Control | GPIO 20 | Pin 38 | **Grey** |
+| *SDO (MISO)* | Display Read (Unused) | — | Disconnected | — |
+| *T_... / SD_...* | Touch & SD Card (Unused) | — | Disconnected | — |
 
 ### WS2812B LEDs -> Visualizer & Status
 *Optimization Tip: Daisy-chain the status LED and the Matrix to use only ONE GPIO pin.*
