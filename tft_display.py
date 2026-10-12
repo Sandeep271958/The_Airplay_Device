@@ -235,10 +235,11 @@ class TrackMeta:
         self.art_img = None   # PIL Image or None
         self._art_raw = b""   # raw bytes for dedup
         # Real-time progress tracking
-        self.prog_elapsed_base = 0.0     # Elapsed seconds at last sync point
-        self.prog_duration     = 0.0     # Total duration in seconds
-        self.prog_update_time  = time.monotonic()  # monotonic clock at last sync point
-        self.is_playing        = False
+        self.prog_elapsed_base   = 0.0     # Elapsed seconds at last sync point
+        self.prog_duration       = 0.0     # Total duration in seconds
+        self.prog_total_duration = 0.0     # Authoritative duration from astm / MPRIS
+        self.prog_update_time    = time.monotonic()  # monotonic clock at last sync point
+        self.is_playing          = False
 
     def on_track_change(self):
         """Immediately clear previous track metadata and progress on track skip."""
@@ -248,21 +249,26 @@ class TrackMeta:
             self.album   = ""
             self.art_img = None
             self._art_raw = b""
-            self.prog_elapsed_base = 0.0
-            self.prog_duration     = 0.0
-            self.prog_update_time  = time.monotonic()
+            self.prog_elapsed_base   = 0.0
+            self.prog_duration       = 0.0
+            self.prog_total_duration = 0.0
+            self.prog_update_time    = time.monotonic()
 
     def set_field(self, key, value):
         with self._lock:
             if key == "title":
                 if value and value != self.title:
                     self.title = value
-                    # Invalidate old album art and progress when a new track title arrives
+                    # Invalidate old album art when a new track title arrives
                     self.art_img = None
                     self._art_raw = b""
-                    self.prog_elapsed_base = 0.0
-                    self.prog_duration     = 0.0
-                    self.prog_update_time  = time.monotonic()
+                    # Only reset progress if progress was not already freshly updated for this track
+                    now = time.monotonic()
+                    if (now - self.prog_update_time) > 2.0:
+                        self.prog_elapsed_base   = 0.0
+                        self.prog_duration       = 0.0
+                        self.prog_total_duration = 0.0
+                        self.prog_update_time    = now
             elif key == "artist":
                 self.artist = value
             elif key == "album":
@@ -283,9 +289,24 @@ class TrackMeta:
                 print(f"[TFT-META] Art decode error: {e}")
                 self.art_img = None
 
+    def set_total_duration(self, duration_sec):
+        """Set authoritative total song duration from astm or D-Bus mpris:length."""
+        with self._lock:
+            dur = float(duration_sec)
+            if 1.0 <= dur <= 43200.0:
+                self.prog_total_duration = dur
+                if self.prog_duration <= 0.0:
+                    self.prog_duration = dur
+                elif self.prog_duration < (dur - 2.0):
+                    # We previously received a seeked stream slice (e.g. 105s remaining of 180s total)
+                    offset = dur - self.prog_duration
+                    self.prog_elapsed_base += offset
+                    self.prog_duration = dur
+                    self.prog_update_time = time.monotonic()
+
     def set_progress(self, a, b=None, c=None, is_playing=None):
         """
-        Update progress anchor from AirPlay prgr packet.
+        Update progress anchor from AirPlay prgr packet or D-Bus ProgressString.
         Supports both signatures:
           set_progress(elapsed, duration, is_playing=...)
           set_progress(start, current, end)
@@ -301,6 +322,18 @@ class TrackMeta:
             else:
                 elapsed  = float(a)
                 duration = 0.0
+
+            # If authoritative total duration is known from astm or MPRIS:
+            if self.prog_total_duration > 0.0:
+                total = self.prog_total_duration
+                # Check if 'duration' from prgr is only the remaining duration:
+                # (e.g. user started at 75s of 180s track: duration=105s, elapsed=0s)
+                if duration > 0.0 and duration < (total - 2.0):
+                    offset = total - duration
+                    elapsed = offset + elapsed
+                duration = total
+            elif duration > 0.0:
+                self.prog_total_duration = duration
 
             if duration > 0.0:
                 elapsed = max(0.0, min(duration, elapsed))
@@ -366,10 +399,11 @@ class TrackMeta:
             self.album   = ""
             self.art_img = None
             self._art_raw = b""
-            self.prog_elapsed_base = 0.0
-            self.prog_duration     = 0.0
-            self.prog_update_time  = time.monotonic()
-            self.is_playing        = False
+            self.prog_elapsed_base   = 0.0
+            self.prog_duration       = 0.0
+            self.prog_total_duration = 0.0
+            self.prog_update_time    = time.monotonic()
+            self.is_playing          = False
 
 
 track_meta = TrackMeta()
@@ -377,6 +411,45 @@ track_meta = TrackMeta()
 # Buffer for chunked cover art (ssnc PICT / pcst / pcen)
 _art_chunks = bytearray()
 _in_picture_stream = False
+
+
+_dbus_wake_event = threading.Event()
+
+def _trigger_dbus_sync():
+    """Wake the D-Bus poller immediately to sync seek position & metadata with zero delay."""
+    _dbus_wake_event.set()
+
+
+def _process_prgr_string(s):
+    """
+    Parse a 3-part progress string (start/current/end RTP timestamps).
+    Handles signed deltas, uint32 rollovers, and offsets accurately.
+    """
+    try:
+        parts = s.strip().split("/")
+        if len(parts) == 3:
+            start_rtp = int(parts[0])
+            curr_rtp  = int(parts[1])
+            end_rtp   = int(parts[2])
+
+            dur_frames = (end_rtp - start_rtp) & 0xFFFFFFFF
+            raw_diff   = (curr_rtp - start_rtp) & 0xFFFFFFFF
+            # Guard against buffer pre-roll jitter where curr_rtp < start_rtp
+            if raw_diff > 0x7FFFFFFF:
+                elapsed_frames = 0
+            else:
+                elapsed_frames = raw_diff
+
+            rate = 44100.0
+            dur_sec     = dur_frames / rate
+            elapsed_sec = elapsed_frames / rate
+
+            if 1.0 <= dur_sec <= 43200.0:
+                elapsed_sec = max(0.0, min(dur_sec, elapsed_sec))
+                track_meta.set_progress(elapsed_sec, dur_sec, is_playing=display_controller.is_playing)
+                print(f"[TFT-META] Progress sync: {elapsed_sec:.1f}s / {dur_sec:.1f}s ({(elapsed_sec/dur_sec)*100:.1f}%)")
+    except Exception as e:
+        print(f"[TFT-META] Progress parse error: {e}")
 
 
 # =====================================================================
@@ -413,9 +486,11 @@ def metadata_reader_thread():
     def _dbus_poller():
         art_cache_dir = "/tmp/shairport-sync-art"
         while True:
-            time.sleep(2)
+            # Wake on event (seek, track start, flush) or at 1.0s regular cadence
+            _dbus_wake_event.wait(timeout=1.0)
+            _dbus_wake_event.clear()
             try:
-                if not display_controller._playing:
+                if not (display_controller._connected or display_controller._playing or track_meta.has_meta()):
                     continue
 
                 # 1. Check cached cover art directory (/tmp/shairport-sync-art)
@@ -430,38 +505,59 @@ def metadata_reader_thread():
                             track_meta.set_art(f.read())
                             print(f"[TFT-META] Loaded cover art from cache directory ({art_files[0]})")
 
-                # 2. Query D-Bus MPRIS if title or art is missing
-                if not track_meta.title or track_meta.art_img is None:
-                    res = subprocess.run(
-                        ["dbus-send", "--system", "--print-reply",
-                         "--dest=org.mpris.MediaPlayer2.ShairportSync",
-                         "/org/mpris/MediaPlayer2",
-                         "org.freedesktop.DBus.Properties.Get",
-                         "string:org.mpris.MediaPlayer2.Player",
-                         "string:Metadata"],
-                        capture_output=True, text=True, timeout=2,
-                    )
-                    if res.returncode == 0:
-                        if "xesam:title" in res.stdout and not track_meta.title:
-                            m_t = re.search(r'string\s+"xesam:title"\s+variant\s+string\s+"([^"]+)"', res.stdout)
-                            if m_t:
-                                track_meta.set_field("title", m_t.group(1))
-                                print(f"[TFT-META] D-Bus Title: {m_t.group(1)}")
-                        if "xesam:artist" in res.stdout and not track_meta.artist:
-                            m_a = re.search(r'string\s+"xesam:artist"\s+variant\s+array\s+\[\s+string\s+"([^"]+)"', res.stdout)
-                            if m_a:
-                                track_meta.set_field("artist", m_a.group(1))
-                                print(f"[TFT-META] D-Bus Artist: {m_a.group(1)}")
-                        if "mpris:artUrl" in res.stdout and track_meta.art_img is None:
-                            m_u = re.search(r'string\s+"mpris:artUrl"\s+variant\s+string\s+"([^"]+)"', res.stdout)
-                            if m_u:
-                                url = m_u.group(1)
-                                if url.startswith("file://"):
-                                    fpath = url[7:]
-                                    if os.path.exists(fpath):
-                                        with open(fpath, "rb") as af:
-                                            track_meta.set_art(af.read())
-                                            print(f"[TFT-META] D-Bus loaded art from: {fpath}")
+                # 2. Query D-Bus MPRIS for Title, Artist, Art, and Total Duration (mpris:length)
+                res = subprocess.run(
+                    ["dbus-send", "--system", "--print-reply",
+                     "--dest=org.mpris.MediaPlayer2.ShairportSync",
+                     "/org/mpris/MediaPlayer2",
+                     "org.freedesktop.DBus.Properties.Get",
+                     "string:org.mpris.MediaPlayer2.Player",
+                     "string:Metadata"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                if res.returncode == 0:
+                    if "xesam:title" in res.stdout:
+                        m_t = re.search(r'string\s+"xesam:title"\s+variant\s+string\s+"([^"]+)"', res.stdout)
+                        if m_t and m_t.group(1) != track_meta.title:
+                            track_meta.set_field("title", m_t.group(1))
+                            print(f"[TFT-META] D-Bus Title: {m_t.group(1)}")
+                    if "xesam:artist" in res.stdout:
+                        m_a = re.search(r'string\s+"xesam:artist"\s+variant\s+array\s+\[\s+string\s+"([^"]+)"', res.stdout)
+                        if m_a and m_a.group(1) != track_meta.artist:
+                            track_meta.set_field("artist", m_a.group(1))
+                            print(f"[TFT-META] D-Bus Artist: {m_a.group(1)}")
+                    if "mpris:artUrl" in res.stdout and track_meta.art_img is None:
+                        m_u = re.search(r'string\s+"mpris:artUrl"\s+variant\s+string\s+"([^"]+)"', res.stdout)
+                        if m_u:
+                            url = m_u.group(1)
+                            if url.startswith("file://"):
+                                fpath = url[7:]
+                                if os.path.exists(fpath):
+                                    with open(fpath, "rb") as af:
+                                        track_meta.set_art(af.read())
+                                        print(f"[TFT-META] D-Bus loaded art from: {fpath}")
+                    # Authoritative Track Duration in microseconds from MPRIS
+                    if "mpris:length" in res.stdout:
+                        m_l = re.search(r'string\s+"mpris:length"\s+variant\s+(?:int64|uint64)\s+(\d+)', res.stdout)
+                        if m_l:
+                            dur_sec = int(m_l.group(1)) / 1_000_000.0
+                            track_meta.set_total_duration(dur_sec)
+
+                # 3. Query D-Bus ProgressString for real-time seek & position tracking
+                res_prgr = subprocess.run(
+                    ["dbus-send", "--system", "--print-reply",
+                     "--dest=org.gnome.ShairportSync",
+                     "/org/gnome/ShairportSync",
+                     "org.freedesktop.DBus.Properties.Get",
+                     "string:org.gnome.ShairportSync.RemoteControl",
+                     "string:ProgressString"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                if res_prgr.returncode == 0:
+                    m_p = re.search(r'string\s+"([^"]+)"', res_prgr.stdout)
+                    if m_p and "/" in m_p.group(1):
+                        _process_prgr_string(m_p.group(1))
+
             except Exception:
                 pass
 
@@ -512,11 +608,11 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
             display_controller.set_playing(False)
             track_meta.set_playing_state(False)
         elif code_ascii == "pfls":
-            # Stream flushed (track skip / audio flush) — discard old art chunks & track progress
+            # Stream flushed (seek / pause / track change) — discard in-flight art buffer & wake poller
             print("[TFT-META] Stream flushed (pfls)")
             _in_picture_stream = False
             _art_chunks.clear()
-            track_meta.on_track_change()
+            _trigger_dbus_sync()
         elif code_ascii == "pcst":
             # Picture stream start
             print("[TFT-META] Album art stream starting (pcst)...")
@@ -548,6 +644,7 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         display_controller.set_playing(True)
         display_controller.set_connected(True)
         track_meta.set_playing_state(True)
+        _trigger_dbus_sync()
     elif code_ascii == "asar":
         artist = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Artist: {artist}")
@@ -581,24 +678,22 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                     pass
     elif code_ascii == "prgr":
         try:
-            parts = raw_data.decode("ascii").split("/")
-            if len(parts) == 3:
-                start_rtp = int(parts[0])
-                curr_rtp  = int(parts[1])
-                end_rtp   = int(parts[2])
-                # RTP timestamps are 32-bit unsigned integers; handle rollover with & 0xFFFFFFFF
-                dur_frames     = (end_rtp - start_rtp) & 0xFFFFFFFF
-                elapsed_frames = (curr_rtp - start_rtp) & 0xFFFFFFFF
-                rate = 44100.0
-                dur_sec     = dur_frames / rate
-                elapsed_sec = elapsed_frames / rate
-                # Sanity check: valid track duration between 1 sec and 12 hours
-                if 1.0 <= dur_sec <= 43200.0:
-                    elapsed_sec = max(0.0, min(dur_sec, elapsed_sec))
-                    track_meta.set_progress(elapsed_sec, dur_sec, is_playing=display_controller.is_playing)
-                    print(f"[TFT-META] Progress sync: {elapsed_sec:.1f}s / {dur_sec:.1f}s ({(elapsed_sec/dur_sec)*100:.1f}%)")
-        except (ValueError, IndexError) as e:
-            print(f"[TFT-META] prgr parse error: {e}")
+            _process_prgr_string(raw_data.decode("ascii", errors="ignore"))
+        except Exception as e:
+            print(f"[TFT-META] prgr dispatch error: {e}")
+    elif code_ascii == "astm":
+        # Authoritative track total duration in milliseconds from DAAP metadata
+        try:
+            if len(raw_data) == 4:
+                ms = int.from_bytes(raw_data, byteorder="big")
+            else:
+                ms = int(raw_data.decode("ascii", errors="ignore").strip())
+            dur_sec = ms / 1000.0
+            if 1.0 <= dur_sec <= 43200.0:
+                print(f"[TFT-META] Song total duration (astm): {dur_sec:.1f}s")
+                track_meta.set_total_duration(dur_sec)
+        except Exception as e:
+            print(f"[TFT-META] astm parse error: {e}")
 
 
 # =====================================================================

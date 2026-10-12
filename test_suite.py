@@ -322,6 +322,48 @@ try:
     else:
         report.log_fail("Progress Bar", "High-Visibility Apple Pill & Thumb Rendering", "Render failed")
 
+    # 5. Mid-track Seek Offset Calculation (authoritative duration + stream slice)
+    # Simulate playing 180s song starting at 75s (iPhone sends remaining 105s in prgr)
+    track_meta.set_total_duration(180.0)
+    # 105s remaining at 44100 Hz = 4630500 frames
+    prgr_seek = "1000000/1000000/5630500"
+    b64_seek  = base64.b64encode(prgr_seek.encode("ascii")).decode("ascii")
+    xml_seek  = f"<item><type>73736e63</type><code>70726772</code><length>{len(prgr_seek)}</length><data encoding=\"base64\">{b64_seek}</data></item>"
+    _process_metadata_item(xml_seek, re_type, re_code, re_data, re_length)
+    snap_seek = track_meta.snapshot()
+    if abs(snap_seek["prog_duration"] - 180.0) < 0.2 and abs(snap_seek["prog_elapsed"] - 75.0) < 0.5:
+        report.log_pass("Progress Bar", "Mid-Track Start & Seek Offset Calculation",
+                        f"Computed 75s offset out of 180s total ({snap_seek['prog_elapsed']:.1f}s / {snap_seek['prog_duration']:.1f}s = {snap_seek['prog_frac']*100:.1f}%)")
+    else:
+        report.log_fail("Progress Bar", "Mid-Track Start & Seek Offset Calculation",
+                        f"Failed offset calculation: elapsed={snap_seek['prog_elapsed']}, dur={snap_seek['prog_duration']}")
+
+    # 6. Stream Flush (pfls) Preserves Metadata & Progress
+    track_meta.set_field("title", "Stayin Alive")
+    track_meta.set_field("artist", "Bee Gees")
+    xml_pfls = "<item><type>73736e63</type><code>70666c73</code><length>0</length></item>"
+    _process_metadata_item(xml_pfls, re_type, re_code, re_data, re_length)
+    snap_pfls = track_meta.snapshot()
+    if snap_pfls["title"] == "Stayin Alive" and snap_pfls["artist"] == "Bee Gees" and snap_pfls["prog_elapsed"] > 70.0:
+        report.log_pass("Progress Bar", "Stream Flush (pfls) Metadata Preservation",
+                        f"Metadata and progress preserved across seek flush (title='{snap_pfls['title']}', pos={snap_pfls['prog_elapsed']:.1f}s)")
+    else:
+        report.log_fail("Progress Bar", "Stream Flush (pfls) Metadata Preservation",
+                        f"Metadata wiped on flush: title='{snap_pfls['title']}', pos={snap_pfls['prog_elapsed']}")
+
+    # 7. astm DAAP Song Time Duration Parsing
+    # 240,000 ms (4 minutes) encoded as 4-byte big-endian uint32 (0x0003A980)
+    astm_bytes = (240000).to_bytes(4, byteorder="big")
+    b64_astm = base64.b64encode(astm_bytes).decode("ascii")
+    xml_astm = f"<item><type>636f7265</type><code>6173746d</code><length>4</length><data encoding=\"base64\">{b64_astm}</data></item>"
+    _process_metadata_item(xml_astm, re_type, re_code, re_data, re_length)
+    if abs(track_meta.prog_total_duration - 240.0) < 0.2:
+        report.log_pass("Progress Bar", "DAAP Total Song Duration (astm) Parsing",
+                        f"Successfully parsed 4-byte big-endian astm to {track_meta.prog_total_duration:.1f}s")
+    else:
+        report.log_fail("Progress Bar", "DAAP Total Song Duration (astm) Parsing",
+                        f"Failed astm parsing: dur={track_meta.prog_total_duration}")
+
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))
 
