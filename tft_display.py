@@ -266,13 +266,12 @@ class TrackMeta:
                     # Invalidate old album art when a new track title arrives
                     self.art_img = None
                     self._art_raw = b""
-                    # Only reset progress if progress was not already freshly updated for this track
+                    # Reset progress anchors for the fresh track
                     now = time.monotonic()
-                    if (now - self.prog_update_time) > 2.0:
-                        self.prog_elapsed_base   = 0.0
-                        self.prog_duration       = 0.0
-                        self.prog_total_duration = 0.0
-                        self.prog_update_time    = now
+                    self.prog_elapsed_base   = 0.0
+                    self.prog_duration       = 0.0
+                    self.prog_total_duration = 0.0
+                    self.prog_update_time    = now
             elif key == "artist":
                 self.artist = value
             elif key == "album":
@@ -329,6 +328,8 @@ class TrackMeta:
 
             # If authoritative total duration is known from astm or MPRIS:
             if self.prog_total_duration > 0.0:
+                if duration > (self.prog_total_duration + 2.0):
+                    self.prog_total_duration = duration
                 total = self.prog_total_duration
                 # Check if 'duration' from prgr is only the remaining duration:
                 # (e.g. user started at 75s of 180s track: duration=105s, elapsed=0s)
@@ -652,6 +653,8 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
     if not m_data:
         # Markers without payload data
         if code_ascii in ("pbeg", "prsm"):
+            global _last_prgr_string
+            _last_prgr_string = ""
             print(f"[TFT-META] AirPlay playback active ({code_ascii})")
             display_controller.set_playing(True)
             display_controller.set_connected(True)
@@ -662,7 +665,6 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
             track_meta.set_playing_state(False)
         elif code_ascii == "pfls":
             # Stream flushed (seek / pause / track change) — discard in-flight art buffer & wake poller
-            global _last_prgr_string
             _last_prgr_string = ""
             print("[TFT-META] Stream flushed (pfls)")
             _in_picture_stream = False
@@ -681,9 +683,8 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                 print(f"[TFT-META] Assembled complete album art ({len(_art_chunks)} bytes)")
                 track_meta.set_art(bytes(_art_chunks))
                 _art_chunks.clear()
-                display_controller.set_playing(True)
                 display_controller.set_connected(True)
-                track_meta.set_playing_state(True)
+                _trigger_dbus_sync()
         return
 
     try:
@@ -696,21 +697,19 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
         title = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Track Title: {title}")
         track_meta.set_field("title", title)
-        display_controller.set_playing(True)
         display_controller.set_connected(True)
-        track_meta.set_playing_state(True)
         _trigger_dbus_sync()
     elif code_ascii == "asar":
         artist = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Artist: {artist}")
         track_meta.set_field("artist", artist)
-        display_controller.set_playing(True)
         display_controller.set_connected(True)
-        track_meta.set_playing_state(True)
+        _trigger_dbus_sync()
     elif code_ascii == "asal":
         album = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Album: {album}")
         track_meta.set_field("album", album)
+        display_controller.set_connected(True)
     elif code_ascii in ("PICT", "pfmd"):
         # Picture payload data — could be a chunk in a sequence or standalone image
         _art_chunks.extend(raw_data)
@@ -725,9 +724,8 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                     print(f"[TFT-META] Received complete single-frame Cover Art ({len(_art_chunks)} bytes)")
                     track_meta.set_art(bytes(_art_chunks))
                     _art_chunks.clear()
-                    display_controller.set_playing(True)
                     display_controller.set_connected(True)
-                    track_meta.set_playing_state(True)
+                    _trigger_dbus_sync()
                 except Exception:
                     # Partial data, wait for remaining chunks or pcen
                     pass

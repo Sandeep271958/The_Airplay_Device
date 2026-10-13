@@ -15,10 +15,15 @@ import sys
 import os
 import time
 import argparse
-import spidev
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-from gpiozero import OutputDevice
+try:
+    import spidev
+except ImportError:
+    spidev = None
+
+try:
+    from gpiozero import OutputDevice
+except ImportError:
+    OutputDevice = None
 
 # --- CLI Options ---
 parser = argparse.ArgumentParser(description="ST7789 TFT Color Calibration & Hardware Diagnostic")
@@ -32,7 +37,14 @@ parser.add_argument("--invon", dest="invert", action="store_true",
                     help="Enable display inversion")
 args, _ = parser.parse_known_args()
 
-# --- Wiring Configuration (BCM Pins) ---
+if spidev is None or OutputDevice is None:
+    print("[NOTE] Direct hardware SPI/GPIO driver test requires 'spidev' and 'gpiozero'.")
+    print("       Execute this script directly on the Raspberry Pi with ST7789 connected:")
+    print("       sudo venv/bin/python test_tft.py")
+    sys.exit(0)
+
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
 SPI_PORT    = 4     # Hardware SPI4 (/dev/spidev4.0)
 SPI_DEVICE  = 0     # CS0 (GPIO 25 via dtoverlay=spi4-1cs,cs0_pin=25)
 PIN_DC      = 24    # Pin 18 (Green)

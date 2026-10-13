@@ -300,6 +300,8 @@ def cava_reader_thread():
         except (OSError, IOError):
             # FIFO was broken (CAVA restarted, etc.) — try again shortly
             time.sleep(1)
+        else:
+            time.sleep(0.5)
 
 
 # =====================================================================
@@ -367,6 +369,8 @@ def _get_shairport_status():
             return "playing"
         elif "Paused" in res.stdout:
             return "paused"
+        elif "Stopped" in res.stdout:
+            return "stopped"
     except Exception:
         pass
 
@@ -459,8 +463,8 @@ def state_monitor_thread():
                 meta_active = track_meta.has_meta() if TFT_AVAILABLE else False
                 meta_is_playing = track_meta.is_playing if TFT_AVAILABLE else False
 
-                # Playback resolution: explicit pause strictly overrides audio decay
-                if dbus_status == "paused" or file_status == "paused":
+                # Playback resolution: explicit pause or stop strictly overrides audio decay
+                if dbus_status in ("paused", "stopped") or file_status in ("paused", "stopped"):
                     is_playing = False
                 elif dbus_status == "playing" or file_status == "playing":
                     is_playing = True
@@ -471,15 +475,22 @@ def state_monitor_thread():
                 else:
                     is_playing = False
 
-                # Connection resolution: session is connected if playing, explicitly paused,
-                # Shairport Active is true, or active track metadata is held
-                is_connected = (
-                    is_playing
-                    or (shairport_conn is True)
-                    or dbus_status in ("paused", "playing")
-                    or file_status in ("connected", "playing", "paused")
-                    or meta_active
-                )
+                # Connection resolution:
+                # If Shairport explicitly reports Active == false or file_status is disconnected,
+                # the AirPlay session has terminated — purge stale metadata and return to idle.
+                if shairport_conn is False or file_status == "disconnected":
+                    is_connected = False
+                    is_playing = False
+                    if TFT_AVAILABLE and track_meta.has_meta():
+                        track_meta.clear()
+                else:
+                    is_connected = (
+                        is_playing
+                        or (shairport_conn is True)
+                        or dbus_status in ("paused", "playing")
+                        or file_status in ("connected", "playing", "paused")
+                        or meta_active
+                    )
 
                 state.connected = is_connected
                 state.playing   = is_playing
@@ -497,6 +508,8 @@ def state_monitor_thread():
                 else:
                     state.connected = False
                     state.playing   = False
+                    if TFT_AVAILABLE and track_meta.has_meta():
+                        track_meta.clear()
 
         except Exception:
             pass
@@ -573,6 +586,8 @@ def toggle_mode():
         state.playing   = False
         if TFT_AVAILABLE:
             display_controller.set_audio_mode("BLUETOOTH")
+            display_controller.set_connected(False)
+            display_controller.set_playing(False)
             track_meta.clear()  # don't show stale AirPlay metadata
         print("[MODE] BLUETOOTH active — waiting for pairing…")
 
@@ -586,6 +601,8 @@ def toggle_mode():
         state.playing   = False
         if TFT_AVAILABLE:
             display_controller.set_audio_mode("AIRPLAY")
+            display_controller.set_connected(False)
+            display_controller.set_playing(False)
             track_meta.clear()  # don't show stale Bluetooth metadata
         print("[MODE] AIRPLAY active — waiting for connection…")
 

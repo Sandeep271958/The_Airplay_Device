@@ -56,6 +56,7 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
 * **Instant Optimistic UI Feedback:** Pressing Play/Pause toggles playback state immediately in memory with 0ms perceived latency. The 4-bar equalizer badge instantly settles flat or resumes dancing, and the progress bar freezes or resumes, while D-Bus network commands dispatch asynchronously in a background daemon thread.
 * **Snappy Tactile Switch Debouncing:** Button inputs are debounced with a calibrated 80ms window (`BOUNCE_TIME = 0.08`), eliminating button drop, double-clicks, and sluggish feel while filtering physical contact chatter.
 * **Decoupled Session & Playback States:** Native `Active` session flag is separated from `PlayerState`/`PlaybackStatus`. When a song is paused, the display stays on Mode 0 or Mode 1 with the flat EQ badge and frozen progress bar rather than prematurely jumping to the clock screen.
+* **Metadata Pause Stability & Disconnect Purging:** Metadata ingestion (`minm`, `asar`, `pcen`, `PICT`) preserves authoritative playback state without false unpausing. On explicit session termination or `Stopped` status, stale metadata and cached artwork are purged instantly, returning the display to the StandBy clock.
 
 ---
 

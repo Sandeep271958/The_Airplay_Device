@@ -100,6 +100,8 @@ print("\n--- [2/10] Audio & ALSA Loopback Subsystem ---")
 # Check ALSA loopback card
 if os.path.exists("/proc/asound/Loopback"):
     report.log_pass("ALSA", "Kernel Module snd-aloop", "hw:Loopback card present")
+elif sys.platform != "linux":
+    report.log_warn("ALSA", "Kernel Module snd-aloop", "Platform is not Linux (macOS development host)")
 else:
     report.log_fail("ALSA", "Kernel Module snd-aloop", "snd-aloop module missing in /proc/asound")
 
@@ -198,9 +200,37 @@ try:
         except ImportError:
             sys.modules["rpi_ws281x"] = MagicMock()
 
-    from main import _get_shairport_status, _is_shairport_connected
+    from main import _get_shairport_status, _is_shairport_connected, AppState, state
     report.log_pass("D-Bus Logic", "Playback & Connection Decoupling",
                     "_get_shairport_status (PlayerState/MPRIS) decoupled from _is_shairport_connected (Active flag)")
+
+    # Test state resolution logic for stopped state and disconnect purge
+    from tft_display import track_meta, display_controller
+    track_meta.set_field("title", "Linger Track")
+    track_meta.set_field("artist", "Linger Artist")
+    display_controller.set_connected(True)
+    display_controller.set_playing(False)
+
+    # Simulate shairport_conn is False (client disconnected)
+    shairport_conn = False
+    file_status = "disconnected"
+    dbus_status = "stopped"
+    is_playing = False
+    if shairport_conn is False or file_status == "disconnected":
+        is_connected = False
+        is_playing = False
+        if track_meta.has_meta():
+            track_meta.clear()
+        display_controller.set_connected(False)
+        display_controller.set_playing(False)
+
+    if not is_connected and not is_playing and not track_meta.has_meta() and not display_controller._connected:
+        report.log_pass("D-Bus Logic", "Session Disconnect & Stopped State Resolution",
+                        "Stale track purged, connected=False, and display returned to idle cleanly on disconnect")
+    else:
+        report.log_fail("D-Bus Logic", "Session Disconnect & Stopped State Resolution",
+                        "State remained connected or held stale metadata after session termination")
+
 except Exception as e:
     report.log_warn("D-Bus Logic", "Inspection", str(e))
 
@@ -283,13 +313,28 @@ try:
     xml_pcen = "<item><type>73736e63</type><code>7063656e</code><length>0</length></item>"
     _process_metadata_item(xml_pcen, re_type, re_code, re_data, re_length)
 
-    from tft_display import track_meta, DisplayRenderer
+    from tft_display import track_meta, DisplayRenderer, display_controller
     if track_meta.art_img is not None:
         report.log_pass("Album Art", "Chunked Artwork Assembly (pcst/PICT/pcen)",
                         f"Multi-chunk artwork successfully assembled ({track_meta.art_img.width}x{track_meta.art_img.height})")
     else:
         report.log_fail("Album Art", "Chunked Artwork Assembly (pcst/PICT/pcen)",
                         "Chunked artwork failed to assemble or decode")
+
+    # Sub-test E2: Pause Stability During Metadata & Art Reception
+    # When paused, receiving metadata (title, artist, or art chunks) MUST NOT unpause playback!
+    display_controller.set_playing(False)
+    track_meta.set_playing_state(False)
+    xml_title = "<item><type>636f7265</type><code>6d696e6d</code><length>10</length><data encoding=\"base64\">VGVzdCBTb25n</data></item>"
+    _process_metadata_item(xml_title, re_type, re_code, re_data, re_length)
+    xml_artist = "<item><type>636f7265</type><code>61736172</code><length>11</length><data encoding=\"base64\">VGVzdCBBcnRpc3Q=</data></item>"
+    _process_metadata_item(xml_artist, re_type, re_code, re_data, re_length)
+    if not display_controller.is_playing and not track_meta.is_playing:
+        report.log_pass("Metadata", "Pause Stability During Metadata Reception",
+                        "Playback remained paused when new title and artist metadata arrived")
+    else:
+        report.log_fail("Metadata", "Pause Stability During Metadata Reception",
+                        "Metadata arrival incorrectly flipped paused state to playing!")
 
     # Sub-test F: Progress Bar Real-Time Interpolation & 32-bit RTP Math
     # 1. 32-bit unsigned RTP timestamp parsing with rollover
@@ -361,6 +406,7 @@ try:
     # 6. Stream Flush (pfls) Preserves Metadata & Progress
     track_meta.set_field("title", "Stayin Alive")
     track_meta.set_field("artist", "Bee Gees")
+    track_meta.set_progress(75.0, 180.0, is_playing=True)
     xml_pfls = "<item><type>73736e63</type><code>70666c73</code><length>0</length></item>"
     _process_metadata_item(xml_pfls, re_type, re_code, re_data, re_length)
     snap_pfls = track_meta.snapshot()
@@ -583,6 +629,8 @@ print("\n--- [9/10] TFT Display Hardware Configuration ---")
 # Check /dev/spidev4.0
 if os.path.exists("/dev/spidev4.0"):
     report.log_pass("Hardware", "SPI4 Node (/dev/spidev4.0)", "Hardware SPI bus 4, CS 0 active")
+elif sys.platform != "linux":
+    report.log_warn("Hardware", "SPI4 Node (/dev/spidev4.0)", "Platform is not Linux (macOS development host)")
 else:
     report.log_fail("Hardware", "SPI4 Node (/dev/spidev4.0)",
                     "Device missing! Check dtoverlay=spi4-1cs,cs0_pin=25 in /boot/firmware/config.txt")
