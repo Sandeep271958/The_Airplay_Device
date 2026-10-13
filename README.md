@@ -57,6 +57,9 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
 * **Snappy Tactile Switch Debouncing:** Button inputs are debounced with a calibrated 80ms window (`BOUNCE_TIME = 0.08`), eliminating button drop, double-clicks, and sluggish feel while filtering physical contact chatter.
 * **Decoupled Session & Playback States:** Native `Active` session flag is separated from `PlayerState`/`PlaybackStatus`. When a song is paused, the display stays on Mode 0 or Mode 1 with the flat EQ badge and frozen progress bar rather than prematurely jumping to the clock screen.
 * **Metadata Pause Stability & Disconnect Purging:** Metadata ingestion (`minm`, `asar`, `pcen`, `PICT`) preserves authoritative playback state without false unpausing. On explicit session termination or `Stopped` status, stale metadata and cached artwork are purged instantly, returning the display to the StandBy clock.
+* **Multi-Card ALSA SoftMaster Volume Fallback:** Physical rocker Volume Up / Down calls probe candidate cards (`Headphones`, `sndrpihifiberry`, `0`, `1`, `2`) if the default card mixer does not expose `SoftMaster`, guaranteeing smooth volume adjustments across RPi 4B and Pi Zero 2W.
+* **Fault-Tolerant Rendering & Display Loop Resilience:** All visualizer routines clamp minimum bar counts (`num_bars = max(1, len(cava_vals))`) to prevent `ZeroDivisionError` on startup or empty pipes. The main display daemon thread in `DisplayController.run()` is wrapped in a resilient exception handler, ensuring the ST7789 display never freezes or terminates.
+* **Dual-Stack Wi-Fi Introspection:** The StandBy clock queries both `iwgetid -r` and `nmcli -t -f active,ssid dev wifi`, displaying active SSID on both legacy and NetworkManager-based Bookworm installations.
 
 ---
 
@@ -161,12 +164,12 @@ cd ~/Airplaydevice
 sudo venv/bin/python test_suite.py
 ```
 
-### Test Suite Modules (37 Passing Tests — 100% Pass Rate):
+### Test Suite Modules (32 Comprehensive Tests — 100% Pass Rate):
 1. **System Environment & Daemons:** Checks root permissions and active systemd units (`shairport-sync`, `airplaydevice`, `avahi-daemon`).
-2. **Audio & ALSA Subsystem:** Validates `snd-aloop`, 3.5mm DAC device, and `SoftMaster` mixer.
-3. **CAVA Audio FIFO:** Validates `/tmp/cava_fifo` node and permissions.
-4. **Shairport Sync D-Bus:** Queries `org.gnome.ShairportSync` and `org.mpris.MediaPlayer2`.
-5. **Metadata & Album Art:** Tests basic fields, JPEG decoding, stale cache clearing, `on_track_change()` reset, and chunked assembly (`pcst` → `PICT` → `pcen`).
+2. **Audio & ALSA Subsystem:** Validates `snd-aloop` kernel module, 3.5mm DAC device, and `SoftMaster` mixer control.
+3. **CAVA Audio FIFO:** Validates `/tmp/cava.fifo` named pipe node and permissions.
+4. **Shairport Sync D-Bus:** Queries `org.gnome.ShairportSync` and `org.mpris.MediaPlayer2`, testing playback/connection decoupling and clean session disconnect/stopped resolution.
+5. **Metadata & Album Art:** Tests basic fields, JPEG decoding, stale cache clearing, `on_track_change()` reset, chunked assembly (`pcst` → `PICT` → `pcen`), and pause stability during metadata reception.
 6. **Progress Bar & Timeline Engine:**
    * 32-bit uint32 RTP timestamp rollover handling.
    * Monotonic 15 FPS real-time clock interpolation (`now - update_time`).
@@ -180,10 +183,11 @@ sudo venv/bin/python test_suite.py
    * Bi-directional seek & scrub geometry (forward to 140s, backward to 30s).
    * Scrubber thumb boundary clamp math at 0%, 50%, and 100%.
    * Dynamic equalizer sound wave badge rendering (active dancing bars on play, flat motionless state on pause).
+   * Zero-division & empty CAVA spectrum resilience across all display modes.
 7. **Typography Assets:** Verifies SF Pro Rounded Bold, SF Compact Rounded, and logo assets.
 8. **Marquee Engine:** Checks ping-pong scrolling offsets, pause intervals, and boundary clamping.
 9. **TFT Hardware & Calibration:** Verifies `/dev/spidev4.0`, RGB subpixel mode (`MADCTL`), and non-inverted colors (`INVOFF`).
-10. **5D Rocker Joystick:** Validates GPIO claim and pull-up resistor health across all 5 control lines.
+10. **5D Rocker Joystick:** Validates GPIO claim and pull-up resistor health across all 7 control lines, single-dispatch D-Bus routing, and 80ms debounce calibration.
 
 ### Standalone Display Calibration Tool
 To inspect or re-calibrate the physical ST7789 display independently:

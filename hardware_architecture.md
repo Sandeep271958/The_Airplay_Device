@@ -163,6 +163,21 @@ The 5D tactile rocker switch interfaces directly with Shairport Sync over D-Bus 
 * **Debounce Calibration:** Tactile rocker microswitch inputs are filtered with `BOUNCE_TIME = 0.08` (80ms), providing crisp, responsive clicking without dropped presses or mechanical contact bounce.
 * **Decoupled Session vs Playback State:** The native `org.gnome.ShairportSync.Active` boolean property indicates active AirPlay client connection rather than playback status. Decoupling connection state from `PlayerState` / `PlaybackStatus` ensures that paused tracks remain on the album art screen (Mode 0 / Mode 1) with the flat EQ badge rather than prematurely reverting to the idle clock screen.
 
+### 5.9. Fault-Tolerant Rendering & Display Loop Exception Guard
+To ensure production-level 24/7 reliability on embedded Raspberry Pi hardware:
+* **Zero-Division Spectrum Guard:** Both full-screen visualiser (`render_visualiser`) and embedded mini-visualiser (`_draw_mini_vis`) enforce safe bar counts ($\text{num\_bars} = \max(1, \text{len}(\text{cava\_vals}))$) and fallback default arrays ($[0] \times 8$). This prevents runtime `ZeroDivisionError` when CAVA is restarting or before the first audio packet arrives.
+* **Display Daemon Loop Isolation:** The frame generation and hardware SPI transmission loop in `DisplayController.run()` is wrapped in an isolated exception block. Any transient rendering anomaly or corrupt payload logs a message and sleeps briefly ($0.5\text{s}$) rather than terminating the background thread, ensuring the physical display never freezes permanently.
+
+### 5.10. Multi-Card ALSA SoftMaster Mixer Fallback
+The PCM5102A I2S DAC and RPi 4B 3.5mm jack lack fixed hardware mixers, relying on ALSA's `softvol` plugin to synthesize the `SoftMaster` control:
+* Because `softvol` binds controls directly to the target hardware card (`card Headphones` or `card sndrpihifiberry`), calling `amixer sset SoftMaster` against the default card may fail if ALSA defaults point to an HDMI audio node.
+* The volume dispatchers `on_vol_up()` and `on_vol_down()` automatically fall back to probing candidate cards (`Headphones`, `sndrpihifiberry`, `0`, `1`, `2`) via `amixer -c <card> sset SoftMaster 5%±`, ensuring reliable volume steps regardless of default card index.
+
+### 5.11. Dual-Stack Wi-Fi SSID Introspection (Bookworm / NetworkManager)
+The StandBy clock screen displays the currently connected Wi-Fi network:
+* On legacy systems, `iwgetid -r` extracts the SSID via `wireless-tools`.
+* On modern Raspberry Pi OS (Debian 12 Bookworm) installations where NetworkManager is default, `iwgetid` may return empty. The introspection engine falls back to `nmcli -t -f active,ssid dev wifi`, guaranteeing the SSID badge renders accurately across both network managers.
+
 ---
 
 ## 6. Audio Routing Pipeline
