@@ -6,8 +6,8 @@ Direct hardware SPI & GPIO driver test for the 2.8" 240×320 LCD.
 Calibrates subpixel color mapping (RGB vs BGR) and display inversion (INVON vs INVOFF).
 
 Usage:
-    sudo venv/bin/python test_tft.py               # Standard calibrated test (BGR + INVOFF)
-    sudo venv/bin/python test_tft.py --rgb         # Force RGB mode
+    sudo venv/bin/python test_tft.py               # Standard calibrated test (RGB + INVOFF)
+    sudo venv/bin/python test_tft.py --bgr         # Force BGR mode
     sudo venv/bin/python test_tft.py --invon       # Force Inversion ON
 """
 
