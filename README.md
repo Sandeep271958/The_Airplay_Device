@@ -28,9 +28,10 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
   * **Non-Inverted Display (`INVOFF`):** Configured with `INVOFF` (`0x20`), eliminating washed-out contrast and negative color artifacts.
 * **Apple SF Pro Rounded Typography Engine:** Rendered with true Apple SF Pro Rounded Bold and SF Compact Rounded typefaces with horizontal ping-pong marquee scrolling and boundary clipping.
 * **3 Display Modes (Cycled via Joystick 'SET'):**
-  * **Mode 0 (Default):** Cover Art + Marquee Song Title & Artist (uncluttered layout, larger typography) + Apple-style Real-Time Progress Bar.
-  * **Mode 1:** Edge-to-Edge Full-Screen Album Art.
+  * **Mode 0 (Default):** Cover Art + Animated Sound Wave EQ Badge + Marquee Song Title & Artist + Apple-style Real-Time Progress Bar.
+  * **Mode 1:** Edge-to-Edge Full-Screen Album Art + Animated Sound Wave EQ Badge.
   * **Mode 2:** Full-Screen Live Frequency Bar Spectrum Visualizer.
+* **Dynamic Equalizer / Sound Wave Status Badge:** Rendered over the bottom-right corner of the album art in Mode 0 and Mode 1. Features 4 animated vertical equalizer bars that dance organically to live CAVA frequency spectrum when playing, and settle flat and motionless when paused for an instant visual status cue.
 * **Apple StandBy Idle Screen:** Shows status capsule pill (`AirPlay Ready`), large time, bold Day & Date, audio mode, and Wi-Fi connection indicator.
 
 ### 2. Intelligent Real-Time Progress Bar & Scrubbing
@@ -153,7 +154,7 @@ cd ~/Airplaydevice
 sudo venv/bin/python test_suite.py
 ```
 
-### Test Suite Modules (36 Passing Tests — 100% Pass Rate):
+### Test Suite Modules (37 Passing Tests — 100% Pass Rate):
 1. **System Environment & Daemons:** Checks root permissions and active systemd units (`shairport-sync`, `airplaydevice`, `avahi-daemon`).
 2. **Audio & ALSA Subsystem:** Validates `snd-aloop`, 3.5mm DAC device, and `SoftMaster` mixer.
 3. **CAVA Audio FIFO:** Validates `/tmp/cava_fifo` node and permissions.
@@ -171,6 +172,7 @@ sudo venv/bin/python test_suite.py
    * 10-packet burst storm resilience.
    * Bi-directional seek & scrub geometry (forward to 140s, backward to 30s).
    * Scrubber thumb boundary clamp math at 0%, 50%, and 100%.
+   * Dynamic equalizer sound wave badge rendering (active dancing bars on play, flat motionless state on pause).
 7. **Typography Assets:** Verifies SF Pro Rounded Bold, SF Compact Rounded, and logo assets.
 8. **Marquee Engine:** Checks ping-pong scrolling offsets, pause intervals, and boundary clamping.
 9. **TFT Hardware & Calibration:** Verifies `/dev/spidev4.0`, RGB subpixel mode (`MADCTL`), and non-inverted colors (`INVOFF`).

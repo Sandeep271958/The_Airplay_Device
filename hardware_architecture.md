@@ -148,6 +148,13 @@ The multi-threaded architecture harmonizes playback state between ALSA Loopback 
 * **Active Playback:** When `dbus_status == "playing"`, CAVA audio energy $> 10$, or session hook file reports `playing`, `is_playing = True`.
 * **Quiet Intro Guard:** When audio energy is low during quiet intro passages, active metadata (`track_meta.is_playing`) maintains playback state without flapping or freezing.
 
+### 5.7. Dynamic Equalizer Sound Wave Status Badge
+An Apple Music / Spotify-style miniature audio spectrum badge is rendered over the bottom-right corner of the album art in Mode 0 (art + info) and Mode 1 (fullscreen art):
+* **Capsule Overlay:** 30×22px translucent frosted-glass capsule (`RGBA(10, 14, 24, 185)`) with a subtle 1px border (`RGBA(255, 255, 255, 55)`) and 6px rounded corners.
+* **Active Animation (Playing):** 4 vertical white bars (`RGBA(255, 255, 255, 240)`) dance smoothly. Heights are computed by blending live CAVA frequency bands ($0, 2, 4, 6$) with organic procedural phase-shifted sine oscillations:
+  $$h_i = \text{clamp}\Big(2, \ \text{max\_h} \cdot \max(0.25, \ 0.7 \cdot |\sin(\omega_i t + \phi_i)| + 0.3 \cdot \text{cava}_i), \ \text{max\_h}\Big)$$
+* **Flat Motionless State (Paused):** When `is_playing == False`, all 4 bars instantly flatten to a still $2\text{px}$ baseline bar ($h_i = 2$), providing an unmistakable visual playback cue without relying solely on the status LED.
+
 ---
 
 ## 6. Audio Routing Pipeline

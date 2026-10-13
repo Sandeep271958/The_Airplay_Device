@@ -1005,6 +1005,13 @@ class DisplayRenderer:
         else:
             self._draw_mini_vis(draw, 0, 0, self.w, art_h, cava_vals)
 
+        # Dynamic Audio Equalizer Badge (bottom-right corner of album art)
+        pill_w = int(30 * _scale)
+        pill_h = int(22 * _scale)
+        badge_x = self.w - pill_w - int(8 * _scale)
+        badge_y = art_h - pill_h - int(8 * _scale)
+        self._draw_eq_badge(img, badge_x, badge_y, meta.get("is_playing", False), cava_vals)
+
         # Bottom info strip (y = 240..320)
         max_w = self.w - int(20 * _scale)   # 220px max width with 10px margins
         margin_x = int(10 * _scale)
@@ -1051,6 +1058,13 @@ class DisplayRenderer:
             draw_marquee_text(img, draw, margin_x, info_y + int(24 * _scale), max_w,
                               meta["artist"] or "",
                               FONT_ARTIST, TEXT_SECONDARY, self.artist_marquee)
+
+        # Dynamic Audio Equalizer Badge (bottom-right corner of fullscreen art)
+        pill_w = int(30 * _scale)
+        pill_h = int(22 * _scale)
+        badge_x = self.w - pill_w - int(10 * _scale)
+        badge_y = self.h - pill_h - int(12 * _scale)
+        self._draw_eq_badge(img, badge_x, badge_y, meta.get("is_playing", False), cava_vals)
 
         return img
 
@@ -1243,6 +1257,55 @@ class DisplayRenderer:
                 radius=max(1, bar_w // 4),
                 fill=color,
             )
+
+    def _draw_eq_badge(self, img, x, y, is_playing, cava_vals=None):
+        """
+        Draw a miniature Apple/Spotify-style animated equalizer badge in the corner of album art.
+        - When playing: 4 dynamic vertical sound wave bars dance to CAVA frequency spectrum + organic sine oscillation.
+        - When paused: bars settle down to a flat, motionless state (2px bar), providing an instant visual playback cue.
+        """
+        pill_w = int(30 * _scale)
+        pill_h = int(22 * _scale)
+        radius = max(3, int(6 * _scale))
+
+        badge = Image.new("RGBA", (pill_w, pill_h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(badge)
+
+        # Frosted glass capsule background with subtle translucent border
+        d.rounded_rectangle([0, 0, pill_w - 1, pill_h - 1], radius=radius,
+                            fill=(10, 14, 24, 185), outline=(255, 255, 255, 55), width=1)
+
+        now = time.monotonic()
+        num_bars = 4
+        bar_w = max(2, int(3 * _scale))
+        gap = max(1, int(2 * _scale))
+        total_w = num_bars * bar_w + (num_bars - 1) * gap
+        start_x = (pill_w - total_w) // 2
+        max_bar_h = int(13 * _scale)
+        base_y = pill_h - int(4 * _scale)
+
+        frequencies = [5.2, 7.1, 6.3, 8.0]
+        phases = [0.0, 1.2, 2.5, 3.8]
+
+        for i in range(num_bars):
+            if not is_playing:
+                # Flat and still when paused
+                bh = max(2, int(2 * _scale))
+            else:
+                # Organic dancing equalizer wave
+                osc = abs(math.sin(now * frequencies[i] + phases[i]))
+                cava_factor = 0.0
+                if cava_vals and len(cava_vals) > i * 2:
+                    cava_factor = cava_vals[i * 2] / 255.0
+                frac = max(osc * 0.7 + cava_factor * 0.3, 0.25)
+                bh = max(2, min(max_bar_h, int(frac * max_bar_h)))
+
+            bx = start_x + i * (bar_w + gap)
+            by = base_y - bh
+            d.rounded_rectangle([bx, by, bx + bar_w - 1, base_y], radius=1,
+                                fill=(255, 255, 255, 240))
+
+        img.paste(badge, (x, y), badge)
 
     def _fit_square(self, art_img, target_w, target_h):
         """Resize and center-crop an image to fit exactly target_w × target_h."""

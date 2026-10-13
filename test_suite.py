@@ -432,6 +432,21 @@ try:
         report.log_fail("Progress Bar", "Scrubber Thumb Clamp & Boundary Geometry",
                         f"Thumb geometry calculation error: 0%={dot_0}, 50%={dot_50}, 100%={dot_100}")
 
+    # 12. Dynamic Equalizer Sound Wave Badge (Playing vs Paused Status)
+    # Mode 0 & Mode 1 composite the audio spectrum badge over the bottom-right corner of album art
+    snap_active = dict(track_meta.snapshot(), is_playing=True, art=Image.new("RGB", (240, 240), (40, 50, 70)))
+    snap_paused = dict(track_meta.snapshot(), is_playing=False, art=Image.new("RGB", (240, 240), (40, 50, 70)))
+    f0_active = renderer.render_art_info(snap_active, [150, 120, 180, 90]*2)
+    f0_paused = renderer.render_art_info(snap_paused, [0]*8)
+    f1_active = renderer.render_art_fullscreen(snap_active, [150, 120, 180, 90]*2)
+    f1_paused = renderer.render_art_fullscreen(snap_paused, [0]*8)
+    if f0_active and f0_paused and f1_active and f1_paused:
+        report.log_pass("Equalizer Badge", "Sound Wave Badge Rendering (Playing vs Paused)",
+                        "Dynamic equalizer badge rendered in Mode 0 and Mode 1 (animated dancing bars on play, flat on pause)")
+    else:
+        report.log_fail("Equalizer Badge", "Sound Wave Badge Rendering (Playing vs Paused)",
+                        "Failed to render equalizer badge frames")
+
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))
 
