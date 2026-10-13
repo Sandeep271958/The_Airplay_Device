@@ -336,6 +336,14 @@ try:
         report.log_fail("Metadata", "Pause Stability During Metadata Reception",
                         "Metadata arrival incorrectly flipped paused state to playing!")
 
+    # Sub-test E3: Artwork Preservation When Title Arrives After Art (AirPlay Order Independence)
+    if track_meta.art_img is not None and track_meta.art_fitted_info is not None:
+        report.log_pass("Album Art", "Artwork Preservation on Trailing Title Tag",
+                        "Newly streamed album art preserved when track title tag arrives after picture stream")
+    else:
+        report.log_fail("Album Art", "Artwork Preservation on Trailing Title Tag",
+                        "Album art was wiped out when title arrived after picture stream!")
+
     # Sub-test F: Progress Bar Real-Time Interpolation & 32-bit RTP Math
     # 1. 32-bit unsigned RTP timestamp parsing with rollover
     start_rtp = 4294947295  # 0xFFFFFFFF - 20001

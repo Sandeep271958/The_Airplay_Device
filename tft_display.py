@@ -232,14 +232,29 @@ class TrackMeta:
         self.title   = ""
         self.artist  = ""
         self.album   = ""
-        self.art_img = None   # PIL Image or None
-        self._art_raw = b""   # raw bytes for dedup
+        self.art_img = None           # PIL Image (for general/legacy use)
+        self.art_fitted_info = None   # Pre-rendered 240x240 RGB for Mode 0 (art + info)
+        self.art_fitted_full = None   # Pre-rendered 240x320 RGB for Mode 1 (fullscreen)
+        self._art_raw  = b""          # raw bytes for dedup
+        self._art_time = 0.0          # monotonic timestamp when art was decoded
         # Real-time progress tracking
         self.prog_elapsed_base   = 0.0     # Elapsed seconds at last sync point
         self.prog_duration       = 0.0     # Total duration in seconds
         self.prog_total_duration = 0.0     # Authoritative duration from astm / MPRIS
         self.prog_update_time    = time.monotonic()  # monotonic clock at last sync point
         self.is_playing          = False
+
+    @staticmethod
+    def _fit_image(img, target_w, target_h):
+        """Pre-scale and center-crop image to exact target dimensions once at ingest."""
+        src_w, src_h = img.size
+        scale = max(target_w / src_w, target_h / src_h)
+        new_w = max(target_w, int(src_w * scale))
+        new_h = max(target_h, int(src_h * scale))
+        resized = img.resize((new_w, new_h), Image.Resampling.BILINEAR)
+        left = (new_w - target_w) // 2
+        top  = (new_h - target_h) // 2
+        return resized.crop((left, top, left + target_w, top + target_h))
 
     def on_track_change(self):
         """Immediately clear previous track metadata and progress on track skip."""
@@ -250,24 +265,30 @@ class TrackMeta:
             self.artist  = ""
             self.album   = ""
             self.art_img = None
+            self.art_fitted_info = None
+            self.art_fitted_full = None
             self._art_raw = b""
+            self._art_time = 0.0
             self.prog_elapsed_base   = 0.0
             self.prog_duration       = 0.0
             self.prog_total_duration = 0.0
             self.prog_update_time    = time.monotonic()
 
-    def set_field(self, key, value):
+    def set_field(self, key, value, keep_recent_art=False):
         with self._lock:
             if key == "title":
                 if value and value != self.title:
                     global _last_prgr_string
                     _last_prgr_string = ""
                     self.title = value
-                    # Invalidate old album art when a new track title arrives
-                    self.art_img = None
-                    self._art_raw = b""
-                    # Reset progress anchors for the fresh track
                     now = time.monotonic()
+                    # Invalidate old album art unless fresh art was just decoded within this track transition
+                    if not (keep_recent_art and (now - self._art_time) < 3.0):
+                        self.art_img = None
+                        self.art_fitted_info = None
+                        self.art_fitted_full = None
+                        self._art_raw = b""
+                    # Reset progress anchors for the fresh track
                     self.prog_elapsed_base   = 0.0
                     self.prog_duration       = 0.0
                     self.prog_total_duration = 0.0
@@ -278,7 +299,7 @@ class TrackMeta:
                 self.album = value
 
     def set_art(self, raw_bytes):
-        """Decode and store album art. Skips if identical to current."""
+        """Decode and pre-scale album art. Skips if identical to current."""
         if not raw_bytes:
             return
         with self._lock:
@@ -286,11 +307,18 @@ class TrackMeta:
                 return  # same image, skip the decode
             self._art_raw = raw_bytes
             try:
-                self.art_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-                print(f"[TFT-META] Decoded album art ({self.art_img.width}x{self.art_img.height})")
+                decoded = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+                self.art_img = decoded
+                # Pre-scale ONCE into exact target resolutions to eliminate per-frame resizing overhead
+                self.art_fitted_info = self._fit_image(decoded, DISPLAY_WIDTH, DISPLAY_WIDTH)
+                self.art_fitted_full = self._fit_image(decoded, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+                self._art_time = time.monotonic()
+                print(f"[TFT-META] Decoded & pre-scaled album art ({decoded.width}x{decoded.height})")
             except Exception as e:
                 print(f"[TFT-META] Art decode error: {e}")
                 self.art_img = None
+                self.art_fitted_info = None
+                self.art_fitted_full = None
 
     def set_total_duration(self, duration_sec):
         """Set authoritative total song duration from astm or D-Bus mpris:length."""
@@ -387,7 +415,9 @@ class TrackMeta:
                 "title":         self.title,
                 "artist":        self.artist,
                 "album":         self.album,
-                "art":           self.art_img.copy() if self.art_img else None,
+                "art":           self.art_img,
+                "art_info":      self.art_fitted_info,
+                "art_full":      self.art_fitted_full,
                 "prog_start":    0.0,
                 "prog_current":  elapsed,
                 "prog_end":      duration,
@@ -405,7 +435,10 @@ class TrackMeta:
             self.artist  = ""
             self.album   = ""
             self.art_img = None
+            self.art_fitted_info = None
+            self.art_fitted_full = None
             self._art_raw = b""
+            self._art_time = 0.0
             self.prog_elapsed_base   = 0.0
             self.prog_duration       = 0.0
             self.prog_total_duration = 0.0
@@ -507,7 +540,6 @@ def metadata_reader_thread():
 
     # Background D-Bus MPRIS metadata & cover art polling fallback
     def _dbus_poller():
-        art_cache_dir = "/tmp/shairport-sync-art"
         while True:
             # Wake on event (seek, track start, flush) or at 1.0s regular cadence
             _dbus_wake_event.wait(timeout=1.0)
@@ -516,19 +548,7 @@ def metadata_reader_thread():
                 if not (display_controller._connected or display_controller._playing or track_meta.has_meta()):
                     continue
 
-                # 1. Check cached cover art directory (/tmp/shairport-sync-art)
-                if track_meta.art_img is None and os.path.exists(art_cache_dir):
-                    art_files = sorted(
-                        [os.path.join(art_cache_dir, f) for f in os.listdir(art_cache_dir)
-                         if f.lower().endswith(('.jpg', '.jpeg', '.png'))],
-                        key=os.path.getmtime, reverse=True
-                    )
-                    if art_files:
-                        with open(art_files[0], "rb") as f:
-                            track_meta.set_art(f.read())
-                            print(f"[TFT-META] Loaded cover art from cache directory ({art_files[0]})")
-
-                # 2. Query D-Bus MPRIS for Title, Artist, Art, and Total Duration (mpris:length)
+                # 1. Query D-Bus MPRIS for Title, Artist, Art, and Total Duration (mpris:length)
                 res = subprocess.run(
                     ["dbus-send", "--system", "--print-reply",
                      "--dest=org.mpris.MediaPlayer2.ShairportSync",
@@ -542,13 +562,14 @@ def metadata_reader_thread():
                     if "xesam:title" in res.stdout:
                         m_t = re.search(r'string\s+"xesam:title"\s+variant\s+string\s+"([^"]+)"', res.stdout)
                         if m_t and m_t.group(1) != track_meta.title:
-                            track_meta.set_field("title", m_t.group(1))
+                            track_meta.set_field("title", m_t.group(1), keep_recent_art=True)
                             print(f"[TFT-META] D-Bus Title: {m_t.group(1)}")
                     if "xesam:artist" in res.stdout:
                         m_a = re.search(r'string\s+"xesam:artist"\s+variant\s+array\s+\[\s+string\s+"([^"]+)"', res.stdout)
                         if m_a and m_a.group(1) != track_meta.artist:
                             track_meta.set_field("artist", m_a.group(1))
                             print(f"[TFT-META] D-Bus Artist: {m_a.group(1)}")
+                    # Load authoritative art from exact mpris:artUrl if art not already streamed via pipe
                     if "mpris:artUrl" in res.stdout and track_meta.art_img is None:
                         m_u = re.search(r'string\s+"mpris:artUrl"\s+variant\s+string\s+"([^"]+)"', res.stdout)
                         if m_u:
@@ -556,9 +577,12 @@ def metadata_reader_thread():
                             if url.startswith("file://"):
                                 fpath = url[7:]
                                 if os.path.exists(fpath):
-                                    with open(fpath, "rb") as af:
-                                        track_meta.set_art(af.read())
-                                        print(f"[TFT-META] D-Bus loaded art from: {fpath}")
+                                    try:
+                                        with open(fpath, "rb") as af:
+                                            track_meta.set_art(af.read())
+                                            print(f"[TFT-META] D-Bus loaded art from: {fpath}")
+                                    except Exception:
+                                        pass
                     # Authoritative Track Duration in microseconds from MPRIS
                     if "mpris:length" in res.stdout:
                         m_l = re.search(r'string\s+"mpris:length"\s+variant\s+(?:int64|uint64)\s+(\d+)', res.stdout)
@@ -566,7 +590,7 @@ def metadata_reader_thread():
                             dur_sec = int(m_l.group(1)) / 1_000_000.0
                             track_meta.set_total_duration(dur_sec)
 
-                # 3. Synchronize PlaybackStatus / PlayerState (Paused vs Playing)
+                # 2. Synchronize PlaybackStatus / PlayerState (Paused vs Playing)
                 res_status = subprocess.run(
                     ["dbus-send", "--system", "--print-reply",
                      "--dest=org.mpris.MediaPlayer2.ShairportSync",
@@ -597,7 +621,7 @@ def metadata_reader_thread():
                         elif "Playing" in res_native.stdout:
                             display_controller.set_playing(True)
 
-                # 4. Query D-Bus ProgressString for real-time seek & position tracking
+                # 3. Query D-Bus ProgressString for real-time seek & position tracking
                 res_prgr = subprocess.run(
                     ["dbus-send", "--system", "--print-reply",
                      "--dest=org.gnome.ShairportSync",
@@ -675,7 +699,7 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
             print("[TFT-META] Album art stream starting (pcst)...")
             _in_picture_stream = True
             _art_chunks.clear()
-            track_meta.art_img = None
+            # Note: preserve existing art until new image finishes decoding in pcen
         elif code_ascii in ("pcen", "pfen"):
             # Picture stream end — assemble all buffered chunks
             _in_picture_stream = False
@@ -684,7 +708,6 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                 track_meta.set_art(bytes(_art_chunks))
                 _art_chunks.clear()
                 display_controller.set_connected(True)
-                _trigger_dbus_sync()
         return
 
     try:
@@ -696,15 +719,13 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
     if code_ascii == "minm":
         title = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Track Title: {title}")
-        track_meta.set_field("title", title)
+        track_meta.set_field("title", title, keep_recent_art=True)
         display_controller.set_connected(True)
-        _trigger_dbus_sync()
     elif code_ascii == "asar":
         artist = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Artist: {artist}")
         track_meta.set_field("artist", artist)
         display_controller.set_connected(True)
-        _trigger_dbus_sync()
     elif code_ascii == "asal":
         album = raw_data.decode("utf-8", errors="replace")
         print(f"[TFT-META] Album: {album}")
@@ -725,7 +746,6 @@ def _process_metadata_item(xml_text, re_type, re_code, re_data, re_length):
                     track_meta.set_art(bytes(_art_chunks))
                     _art_chunks.clear()
                     display_controller.set_connected(True)
-                    _trigger_dbus_sync()
                 except Exception:
                     # Partial data, wait for remaining chunks or pcen
                     pass
@@ -1029,7 +1049,9 @@ class DisplayRenderer:
 
         # Layout: art is a perfect square at the top (0..240)
         art_h = self.w
-        if meta["art"]:
+        if meta.get("art_info"):
+            img.paste(meta["art_info"], (0, 0))
+        elif meta.get("art"):
             art = self._fit_square(meta["art"], self.w, art_h)
             img.paste(art, (0, 0))
         else:
@@ -1072,7 +1094,9 @@ class DisplayRenderer:
         """Edge-to-edge album art, no text overlay."""
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
 
-        if meta["art"]:
+        if meta.get("art_full"):
+            img.paste(meta["art_full"], (0, 0))
+        elif meta.get("art"):
             art = self._fit_square(meta["art"], self.w, self.h)
             img.paste(art, (0, 0))
         else:
@@ -1368,29 +1392,43 @@ class DisplayRenderer:
         b = int(VIS_GRADIENT[lo][2] * (1 - t) + VIS_GRADIENT[hi][2] * t)
         return (r, g, b)
 
-    @staticmethod
-    def _get_wifi_ssid():
-        """Get the currently connected Wi-Fi SSID (Linux only)."""
+    _cached_ssid = None
+    _cached_ssid_time = 0.0
+
+    @classmethod
+    def _get_wifi_ssid(cls):
+        """Get the currently connected Wi-Fi SSID (Linux only), cached for 30s to avoid frame lag."""
+        now = time.monotonic()
+        if cls._cached_ssid is not None and (now - cls._cached_ssid_time) < 30.0:
+            return cls._cached_ssid
+
+        ssid = None
         try:
             result = subprocess.run(
                 ["iwgetid", "-r"],
                 capture_output=True, text=True, timeout=1,
             )
             if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+                ssid = result.stdout.strip()
         except Exception:
             pass
-        try:
-            result = subprocess.run(
-                ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
-                capture_output=True, text=True, timeout=1,
-            )
-            for line in result.stdout.splitlines():
-                if line.startswith("yes:"):
-                    return line.split(":", 1)[1].strip() or None
-        except Exception:
-            pass
-        return None
+
+        if not ssid:
+            try:
+                result = subprocess.run(
+                    ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                for line in result.stdout.splitlines():
+                    if line.startswith("yes:"):
+                        ssid = line.split(":", 1)[1].strip() or None
+                        break
+            except Exception:
+                pass
+
+        cls._cached_ssid = ssid
+        cls._cached_ssid_time = now
+        return ssid
 
 
 # =====================================================================
