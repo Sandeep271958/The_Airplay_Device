@@ -466,8 +466,9 @@ def _process_prgr_string(s):
 
             if 1.0 <= dur_sec <= 43200.0:
                 elapsed_sec = max(0.0, min(dur_sec, elapsed_sec))
-                track_meta.set_progress(elapsed_sec, dur_sec, is_playing=True)
-                display_controller.set_playing(True)
+                # Preserve authoritative playing/paused state rather than blindly clobbering pause
+                playing_now = display_controller.is_playing
+                track_meta.set_progress(elapsed_sec, dur_sec, is_playing=playing_now)
                 print(f"[TFT-META] Progress sync: {elapsed_sec:.1f}s / {dur_sec:.1f}s ({(elapsed_sec/dur_sec)*100:.1f}%)")
     except Exception as e:
         print(f"[TFT-META] Progress parse error: {e}")
@@ -564,22 +565,7 @@ def metadata_reader_thread():
                             dur_sec = int(m_l.group(1)) / 1_000_000.0
                             track_meta.set_total_duration(dur_sec)
 
-                # 3. Query D-Bus ProgressString for real-time seek & position tracking
-                res_prgr = subprocess.run(
-                    ["dbus-send", "--system", "--print-reply",
-                     "--dest=org.gnome.ShairportSync",
-                     "/org/gnome/ShairportSync",
-                     "org.freedesktop.DBus.Properties.Get",
-                     "string:org.gnome.ShairportSync.RemoteControl",
-                     "string:ProgressString"],
-                    capture_output=True, text=True, timeout=1,
-                )
-                if res_prgr.returncode == 0:
-                    m_p = re.search(r'string\s+"([^"]+)"', res_prgr.stdout)
-                    if m_p and "/" in m_p.group(1):
-                        _process_prgr_string(m_p.group(1))
-
-                # 4. Synchronize PlaybackStatus / PlayerState (Paused vs Playing)
+                # 3. Synchronize PlaybackStatus / PlayerState (Paused vs Playing)
                 res_status = subprocess.run(
                     ["dbus-send", "--system", "--print-reply",
                      "--dest=org.mpris.MediaPlayer2.ShairportSync",
@@ -609,6 +595,21 @@ def metadata_reader_thread():
                             display_controller.set_playing(False)
                         elif "Playing" in res_native.stdout:
                             display_controller.set_playing(True)
+
+                # 4. Query D-Bus ProgressString for real-time seek & position tracking
+                res_prgr = subprocess.run(
+                    ["dbus-send", "--system", "--print-reply",
+                     "--dest=org.gnome.ShairportSync",
+                     "/org/gnome/ShairportSync",
+                     "org.freedesktop.DBus.Properties.Get",
+                     "string:org.gnome.ShairportSync.RemoteControl",
+                     "string:ProgressString"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                if res_prgr.returncode == 0:
+                    m_p = re.search(r'string\s+"([^"]+)"', res_prgr.stdout)
+                    if m_p and "/" in m_p.group(1):
+                        _process_prgr_string(m_p.group(1))
 
             except Exception:
                 pass
