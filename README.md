@@ -51,6 +51,12 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
 * **ALSA Loopback Routing:** Couples audio playback to line output while feeding a zero-lag `dsnoop` capture channel.
 * **LED Visualizer (CAVA):** Frequency analysis pipeline powering an 8×8 WS2812B matrix and status indicator over hardware SPI0 MOSI (GPIO 10) to avoid I2S/PWM DMA conflicts.
 
+### 4. 5D Rocker Joystick & Media Control Architecture
+* **Single-Dispatch Command Routing:** Eliminates double-toggle glitches on iOS by prioritizing native `org.gnome.ShairportSync.RemoteControl` D-Bus interface and falling back to MPRIS `MediaPlayer2.Player` only if necessary. Pressing Play/Pause, Next, or Prev triggers exactly one action without rapid toggle loops.
+* **Instant Optimistic UI Feedback:** Pressing Play/Pause toggles playback state immediately in memory with 0ms perceived latency. The 4-bar equalizer badge instantly settles flat or resumes dancing, and the progress bar freezes or resumes, while D-Bus network commands dispatch asynchronously in a background daemon thread.
+* **Snappy Tactile Switch Debouncing:** Button inputs are debounced with a calibrated 80ms window (`BOUNCE_TIME = 0.08`), eliminating button drop, double-clicks, and sluggish feel while filtering physical contact chatter.
+* **Decoupled Session & Playback States:** Native `Active` session flag is separated from `PlayerState`/`PlaybackStatus`. When a song is paused, the display stays on Mode 0 or Mode 1 with the flat EQ badge and frozen progress bar rather than prematurely jumping to the clock screen.
+
 ---
 
 ## Hardware Wiring Reference

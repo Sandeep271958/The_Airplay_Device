@@ -579,6 +579,37 @@ def metadata_reader_thread():
                     if m_p and "/" in m_p.group(1):
                         _process_prgr_string(m_p.group(1))
 
+                # 4. Synchronize PlaybackStatus / PlayerState (Paused vs Playing)
+                res_status = subprocess.run(
+                    ["dbus-send", "--system", "--print-reply",
+                     "--dest=org.mpris.MediaPlayer2.ShairportSync",
+                     "/org/mpris/MediaPlayer2",
+                     "org.freedesktop.DBus.Properties.Get",
+                     "string:org.mpris.MediaPlayer2.Player",
+                     "string:PlaybackStatus"],
+                    capture_output=True, text=True, timeout=1,
+                )
+                if res_status.returncode == 0:
+                    if "Paused" in res_status.stdout:
+                        display_controller.set_playing(False)
+                    elif "Playing" in res_status.stdout:
+                        display_controller.set_playing(True)
+                else:
+                    res_native = subprocess.run(
+                        ["dbus-send", "--system", "--print-reply",
+                         "--dest=org.gnome.ShairportSync",
+                         "/org/gnome/ShairportSync",
+                         "org.freedesktop.DBus.Properties.Get",
+                         "string:org.gnome.ShairportSync.RemoteControl",
+                         "string:PlayerState"],
+                        capture_output=True, text=True, timeout=1,
+                    )
+                    if res_native.returncode == 0:
+                        if "Paused" in res_native.stdout:
+                            display_controller.set_playing(False)
+                        elif "Playing" in res_native.stdout:
+                            display_controller.set_playing(True)
+
             except Exception:
                 pass
 
@@ -1639,19 +1670,26 @@ class DisplayController:
                 cava_vals  = list(self._cava_vals)
 
             # Decide what to render
-            if not playing:
-                # Idle → clock / status
+            has_track = track_meta.has_meta() and connected
+
+            if not playing and not has_track:
+                # Idle (no active session or track loaded) → clock / status
                 frame = self.renderer.render_clock(audio_mode, connected)
                 interval = interval_idle
             else:
+                # Active track session: playing OR paused
                 meta = track_meta.snapshot()
+                meta["is_playing"] = playing  # ensure synchronized playing flag for flat EQ badge on pause
                 if mode == 0:
                     frame = self.renderer.render_art_info(meta, cava_vals)
                 elif mode == 1:
                     frame = self.renderer.render_art_fullscreen(meta, cava_vals)
                 else:
-                    frame = self.renderer.render_visualiser(cava_vals)
-                interval = interval_active
+                    if not playing:
+                        frame = self.renderer.render_art_info(meta, [0] * len(cava_vals))
+                    else:
+                        frame = self.renderer.render_visualiser(cava_vals)
+                interval = interval_active if playing else 0.1
 
             # Push to hardware
             try:

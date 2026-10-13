@@ -76,7 +76,7 @@ PIN_PLAY_PAUSE  = 26    # MID    → Play / Pause
 PIN_VIS_MODE    = 27    # SET    → Cycle Visualizer Modes
 PIN_MODE_TOGGLE = 4     # RST    → Toggle AirPlay ↔ Bluetooth (hold 1 s)
 
-BOUNCE_TIME     = 0.15  # seconds — mechanical switch debounce
+BOUNCE_TIME     = 0.08  # seconds — snappier mechanical switch debounce
 HOLD_TIME       = 1.0   # seconds — long-press to trigger mode toggle
 
 # --- Paths ---
@@ -370,7 +370,34 @@ def _get_shairport_status():
     except Exception:
         pass
 
-    # 2. Try Native ShairportSync Active property
+    # 2. Try Native ShairportSync RemoteControl PlayerState
+    try:
+        res = subprocess.run(
+            ["dbus-send", "--system", "--print-reply",
+             "--dest=org.gnome.ShairportSync",
+             "/org/gnome/ShairportSync",
+             "org.freedesktop.DBus.Properties.Get",
+             "string:org.gnome.ShairportSync.RemoteControl",
+             "string:PlayerState"],
+            capture_output=True, text=True, timeout=1,
+        )
+        if "Playing" in res.stdout:
+            return "playing"
+        elif "Paused" in res.stdout:
+            return "paused"
+        elif "Stopped" in res.stdout:
+            return "stopped"
+    except Exception:
+        pass
+
+    return None
+
+
+def _is_shairport_connected():
+    """
+    Check if an AirPlay client session is currently active.
+    Uses native org.gnome.ShairportSync.Active property.
+    """
     try:
         res = subprocess.run(
             ["dbus-send", "--system", "--print-reply",
@@ -382,10 +409,11 @@ def _get_shairport_status():
             capture_output=True, text=True, timeout=1,
         )
         if "boolean true" in res.stdout:
-            return "playing"
+            return True
+        elif "boolean false" in res.stdout:
+            return False
     except Exception:
         pass
-
     return None
 
 
@@ -394,10 +422,11 @@ def state_monitor_thread():
     Poll connection/playback state every 1 second.
     Uses multi-source fusion:
       1. CAVA audio energy (audio samples flowing through Loopback)
-      2. Shairport Sync D-Bus status (MPRIS PlaybackStatus / Native Active)
-      3. Track metadata activity
-      4. /tmp/airplay_state hook file
-      5. bluetoothctl query (for Bluetooth mode)
+      2. Shairport Sync D-Bus status (RemoteControl PlayerState / MPRIS PlaybackStatus)
+      3. Native Shairport Sync Active session flag (connection state)
+      4. Track metadata activity
+      5. /tmp/airplay_state hook file
+      6. bluetoothctl query (for Bluetooth mode)
     """
     global _last_audio_active_time
 
@@ -411,10 +440,11 @@ def state_monitor_thread():
                 if peak_audio > 10:
                     _last_audio_active_time = now
 
-                audio_flowing = (now - _last_audio_active_time) < 3.5
+                audio_flowing = (now - _last_audio_active_time) < 1.5
 
-                # 2. Shairport Sync status via D-Bus
+                # 2. Shairport Sync playback state via D-Bus
                 dbus_status = _get_shairport_status()
+                shairport_conn = _is_shairport_connected()
 
                 # 3. /tmp/airplay_state file
                 file_status = None
@@ -427,20 +457,27 @@ def state_monitor_thread():
 
                 # 4. Metadata activity
                 meta_active = track_meta.has_meta() if TFT_AVAILABLE else False
+                meta_is_playing = track_meta.is_playing if TFT_AVAILABLE else False
 
-                if dbus_status == "paused":
+                # Playback resolution: explicit pause strictly overrides audio decay
+                if dbus_status == "paused" or file_status == "paused":
                     is_playing = False
-                elif audio_flowing or dbus_status == "playing" or file_status == "playing":
+                elif dbus_status == "playing" or file_status == "playing":
                     is_playing = True
-                elif TFT_AVAILABLE and track_meta.is_playing:
+                elif audio_flowing:
+                    is_playing = True
+                elif meta_is_playing:
                     is_playing = True
                 else:
                     is_playing = False
 
+                # Connection resolution: session is connected if playing, explicitly paused,
+                # Shairport Active is true, or active track metadata is held
                 is_connected = (
                     is_playing
+                    or (shairport_conn is True)
                     or dbus_status in ("paused", "playing")
-                    or file_status in ("connected", "playing")
+                    or file_status in ("connected", "playing", "paused")
                     or meta_active
                 )
 
@@ -557,34 +594,64 @@ def toggle_mode():
 # MEDIA CONTROL CALLBACKS  (AirPlay & Bluetooth)
 # =====================================================================
 
-def _send_dbus_command(destination, path, interface, method):
-    """Send a D-Bus method call on the system message bus."""
+def _send_shairport_command(method):
+    """
+    Send media command (PlayPause, Next, Previous, VolumeUp, VolumeDown) to Shairport Sync.
+    Attempts primary RemoteControl interface first.
+    If that returns an error or non-zero code, falls back to MPRIS MediaPlayer2.
+    Crucially NEVER sends both, avoiding double-trigger toggles on iOS.
+    """
+    cmd_remote = [
+        "dbus-send", "--system", "--type=method_call",
+        "--dest=org.gnome.ShairportSync",
+        "/org/gnome/ShairportSync",
+        f"org.gnome.ShairportSync.RemoteControl.{method}"
+    ]
     try:
-        subprocess.run(
-            ["dbus-send", "--system", "--type=method_call",
-             f"--dest={destination}", path, f"{interface}.{method}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
-        )
+        res = subprocess.run(cmd_remote, capture_output=True, timeout=1.5)
+        if res.returncode == 0:
+            return True
     except Exception:
         pass
+
+    # Fallback to MPRIS
+    cmd_mpris = [
+        "dbus-send", "--system", "--type=method_call",
+        "--dest=org.mpris.MediaPlayer2.ShairportSync",
+        "/org/mpris/MediaPlayer2",
+        f"org.mpris.MediaPlayer2.Player.{method}"
+    ]
+    try:
+        res = subprocess.run(cmd_mpris, capture_output=True, timeout=1.5)
+        return res.returncode == 0
+    except Exception:
+        pass
+    return False
+
+
+def _async_shairport_command(method):
+    """Dispatch command to Shairport Sync in background thread without blocking GPIO callbacks."""
+    threading.Thread(target=_send_shairport_command, args=(method,), daemon=True).start()
 
 
 def on_vol_up():
     """Increase volume via ALSA softvol and send VolumeUp to AirPlay source."""
     print("[BTN] Volume ▲")
-    subprocess.run(["amixer", "sset", "SoftMaster", "5%+"], check=False)
-    if state.mode == AppState.MODE_AIRPLAY:
-        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
-                           "org.gnome.ShairportSync.RemoteControl", "VolumeUp")
+    def _run():
+        subprocess.run(["amixer", "sset", "SoftMaster", "5%+"], check=False)
+        if state.mode == AppState.MODE_AIRPLAY:
+            _send_shairport_command("VolumeUp")
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def on_vol_down():
     """Decrease volume via ALSA softvol and send VolumeDown to AirPlay source."""
     print("[BTN] Volume ▼")
-    subprocess.run(["amixer", "sset", "SoftMaster", "5%-"], check=False)
-    if state.mode == AppState.MODE_AIRPLAY:
-        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
-                           "org.gnome.ShairportSync.RemoteControl", "VolumeDown")
+    def _run():
+        subprocess.run(["amixer", "sset", "SoftMaster", "5%-"], check=False)
+        if state.mode == AppState.MODE_AIRPLAY:
+            _send_shairport_command("VolumeDown")
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def on_next():
@@ -593,13 +660,12 @@ def on_next():
     if TFT_AVAILABLE:
         track_meta.on_track_change()
     if state.mode == AppState.MODE_AIRPLAY:
-        # Shairport Sync remote control (sends DACP next to iPhone)
-        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
-                           "org.gnome.ShairportSync.RemoteControl", "Next")
-        _send_dbus_command("org.mpris.MediaPlayer2.ShairportSync", "/org/mpris/MediaPlayer2",
-                           "org.mpris.MediaPlayer2.Player", "Next")
+        _async_shairport_command("Next")
     elif state.mode == AppState.MODE_BLUETOOTH:
-        subprocess.run(["bluetoothctl", "next"], check=False)
+        threading.Thread(
+            target=lambda: subprocess.run(["bluetoothctl", "next"], check=False),
+            daemon=True
+        ).start()
 
 
 def on_prev():
@@ -608,29 +674,41 @@ def on_prev():
     if TFT_AVAILABLE:
         track_meta.on_track_change()
     if state.mode == AppState.MODE_AIRPLAY:
-        # Shairport Sync remote control (sends DACP previous to iPhone)
-        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
-                           "org.gnome.ShairportSync.RemoteControl", "Previous")
-        _send_dbus_command("org.mpris.MediaPlayer2.ShairportSync", "/org/mpris/MediaPlayer2",
-                           "org.mpris.MediaPlayer2.Player", "Previous")
+        _async_shairport_command("Previous")
     elif state.mode == AppState.MODE_BLUETOOTH:
-        subprocess.run(["bluetoothctl", "previous"], check=False)
+        threading.Thread(
+            target=lambda: subprocess.run(["bluetoothctl", "previous"], check=False),
+            daemon=True
+        ).start()
 
 
 def on_play_pause():
-    """Toggle play / pause on connected phone (AirPlay or Bluetooth)."""
+    """Toggle play / pause with instantaneous optimistic UI feedback."""
     print("[BTN] Play/Pause ⏯")
     if state.mode == AppState.MODE_AIRPLAY:
-        # Shairport Sync remote control (sends DACP play-pause to iPhone)
-        _send_dbus_command("org.gnome.ShairportSync", "/org/gnome/ShairportSync",
-                           "org.gnome.ShairportSync.RemoteControl", "PlayPause")
-        _send_dbus_command("org.mpris.MediaPlayer2.ShairportSync", "/org/mpris/MediaPlayer2",
-                           "org.mpris.MediaPlayer2.Player", "PlayPause")
+        # Optimistic UI update: instant visual feedback (0ms perceived latency)
+        new_playing = not state.playing
+        state.playing = new_playing
+        if TFT_AVAILABLE:
+            display_controller.set_playing(new_playing)
+        _async_shairport_command("PlayPause")
     elif state.mode == AppState.MODE_BLUETOOTH:
         if state.playing:
-            subprocess.run(["bluetoothctl", "pause"], check=False)
+            state.playing = False
+            if TFT_AVAILABLE:
+                display_controller.set_playing(False)
+            threading.Thread(
+                target=lambda: subprocess.run(["bluetoothctl", "pause"], check=False),
+                daemon=True
+            ).start()
         else:
-            subprocess.run(["bluetoothctl", "play"], check=False)
+            state.playing = True
+            if TFT_AVAILABLE:
+                display_controller.set_playing(True)
+            threading.Thread(
+                target=lambda: subprocess.run(["bluetoothctl", "play"], check=False),
+                daemon=True
+            ).start()
 
 
 def on_vis_mode():

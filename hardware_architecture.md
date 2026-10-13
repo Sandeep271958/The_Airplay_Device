@@ -155,6 +155,14 @@ An Apple Music / Spotify-style miniature audio spectrum badge is rendered over t
   $$h_i = \text{clamp}\Big(2, \ \text{max\_h} \cdot \max(0.25, \ 0.7 \cdot |\sin(\omega_i t + \phi_i)| + 0.3 \cdot \text{cava}_i), \ \text{max\_h}\Big)$$
 * **Flat Motionless State (Paused):** When `is_playing == False`, all 4 bars instantly flatten to a still $2\text{px}$ baseline bar ($h_i = 2$), providing an unmistakable visual playback cue without relying solely on the status LED.
 
+### 5.8. Single-Dispatch Media Control & Optimistic UI Architecture
+The 5D tactile rocker switch interfaces directly with Shairport Sync over D-Bus with production-level responsiveness:
+* **Single-Dispatch Command Routing:** Previous iterations fired identical commands sequentially to both `org.gnome.ShairportSync.RemoteControl` and `org.mpris.MediaPlayer2.Player`. Because both interfaces are hosted in the same daemon, iOS received two DACP packets in rapid succession (< 50ms), causing immediate toggle cancellation (e.g. Pause followed instantly by Resume). The unified `_send_shairport_command()` dispatches strictly to the primary RemoteControl interface, falling back to MPRIS only on a non-zero exit code.
+* **Instant Optimistic UI Feedback:** Pressing MID (Play/Pause) updates local playback state in memory immediately before dispatching the D-Bus network call. This produces $0\text{ms}$ perceived visual latency: the 4-bar equalizer badge instantly settles flat or resumes dancing, and the progress bar freezes or resumes without waiting for the 1.0s background D-Bus poller.
+* **Non-Blocking Asynchronous Workers:** Media commands and ALSA volume adjustments are handed off to daemon threads (`threading.Thread`), preventing blocking subprocess calls from starving `gpiozero`'s worker thread.
+* **Debounce Calibration:** Tactile rocker microswitch inputs are filtered with `BOUNCE_TIME = 0.08` (80ms), providing crisp, responsive clicking without dropped presses or mechanical contact bounce.
+* **Decoupled Session vs Playback State:** The native `org.gnome.ShairportSync.Active` boolean property indicates active AirPlay client connection rather than playback status. Decoupling connection state from `PlayerState` / `PlaybackStatus` ensures that paused tracks remain on the album art screen (Mode 0 / Mode 1) with the flat EQ badge rather than prematurely reverting to the idle clock screen.
+
 ---
 
 ## 6. Audio Routing Pipeline

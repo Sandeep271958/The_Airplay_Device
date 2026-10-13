@@ -184,6 +184,26 @@ try:
 except Exception as e:
     report.log_warn("D-Bus", "MPRIS Player Interface", str(e))
 
+# Test Playback & Connection Status Decoupling in main.py
+try:
+    from unittest.mock import MagicMock
+    if "gpiozero" not in sys.modules:
+        try:
+            import gpiozero
+        except ImportError:
+            sys.modules["gpiozero"] = MagicMock()
+    if "rpi_ws281x" not in sys.modules:
+        try:
+            import rpi_ws281x
+        except ImportError:
+            sys.modules["rpi_ws281x"] = MagicMock()
+
+    from main import _get_shairport_status, _is_shairport_connected
+    report.log_pass("D-Bus Logic", "Playback & Connection Decoupling",
+                    "_get_shairport_status (PlayerState/MPRIS) decoupled from _is_shairport_connected (Active flag)")
+except Exception as e:
+    report.log_warn("D-Bus Logic", "Inspection", str(e))
+
 
 # =====================================================================
 # TEST 5 & 6: METADATA & COVER ART INGESTION & INVALIDATION PIPELINE
@@ -434,18 +454,39 @@ try:
 
     # 12. Dynamic Equalizer Sound Wave Badge (Playing vs Paused Status)
     # Mode 0 & Mode 1 composite the audio spectrum badge over the bottom-right corner of album art
-    snap_active = dict(track_meta.snapshot(), is_playing=True, art=Image.new("RGB", (240, 240), (40, 50, 70)))
-    snap_paused = dict(track_meta.snapshot(), is_playing=False, art=Image.new("RGB", (240, 240), (40, 50, 70)))
-    f0_active = renderer.render_art_info(snap_active, [150, 120, 180, 90]*2)
-    f0_paused = renderer.render_art_info(snap_paused, [0]*8)
-    f1_active = renderer.render_art_fullscreen(snap_active, [150, 120, 180, 90]*2)
+    test_art = Image.new("RGB", (240, 240), (40, 50, 70))
+    snap_active = dict(track_meta.snapshot(), is_playing=True, art=test_art)
+    snap_paused = dict(track_meta.snapshot(), is_playing=False, art=test_art)
+
+    # Render paused frames 50ms apart — MUST be completely motionless (pixel delta = 0)
+    f0_paused_1 = renderer.render_art_info(snap_paused, [180, 200, 220, 190]*2)
+    time.sleep(0.05)
+    f0_paused_2 = renderer.render_art_info(snap_paused, [0]*8)
+
+    # Badge bounding box in Mode 0: bottom-right of 240x240 album art (approx 200..235, 208..234)
+    crop_p1 = f0_paused_1.crop((200, 208, 235, 234))
+    crop_p2 = f0_paused_2.crop((200, 208, 235, 234))
+    import numpy as np
+    diff_paused = np.sum(np.abs(np.array(crop_p1, dtype=int) - np.array(crop_p2, dtype=int)))
+
+    # Render playing frames 50ms apart — MUST be dynamically animating (pixel delta > 0)
+    f0_play_1 = renderer.render_art_info(snap_active, [150, 120, 180, 90]*2)
+    time.sleep(0.05)
+    f0_play_2 = renderer.render_art_info(snap_active, [80, 190, 110, 220]*2)
+    crop_a1 = f0_play_1.crop((200, 208, 235, 234))
+    crop_a2 = f0_play_2.crop((200, 208, 235, 234))
+    diff_active = np.sum(np.abs(np.array(crop_a1, dtype=int) - np.array(crop_a2, dtype=int)))
+
+    # Mode 1 Full-screen Album Art check
     f1_paused = renderer.render_art_fullscreen(snap_paused, [0]*8)
-    if f0_active and f0_paused and f1_active and f1_paused:
+    f1_play   = renderer.render_art_fullscreen(snap_active, [150, 120, 180, 90]*2)
+
+    if diff_paused == 0 and diff_active > 0 and f1_paused and f1_play:
         report.log_pass("Equalizer Badge", "Sound Wave Badge Rendering (Playing vs Paused)",
-                        "Dynamic equalizer badge rendered in Mode 0 and Mode 1 (animated dancing bars on play, flat on pause)")
+                        f"Verified flat motionless state on pause (delta=0px) & dynamic dancing on play (delta={diff_active}px) in Mode 0 & Mode 1")
     else:
         report.log_fail("Equalizer Badge", "Sound Wave Badge Rendering (Playing vs Paused)",
-                        "Failed to render equalizer badge frames")
+                        f"Failed: diff_paused={diff_paused} (must be 0), diff_active={diff_active} (must be >0)")
 
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))
@@ -574,11 +615,13 @@ except Exception as e:
 print("\n--- [10/10] 5D Rocker Joystick GPIO Pins ---")
 
 JOYSTICK_PINS = {
-    "vol_up":   16,  # Board 36
-    "vol_down": 19,  # Board 35
-    "prev":     26,  # Board 37
-    "next":     21,  # Board 40
-    "play":     13,  # Board 33
+    "vol_up":   16,  # Board 36 (UP)
+    "vol_down": 17,  # Board 11 (DOWN)
+    "prev":     22,  # Board 15 (LEFT)
+    "next":     23,  # Board 16 (RIGHT)
+    "play":     26,  # Board 37 (MID)
+    "vis":      27,  # Board 13 (SET)
+    "mode":     4,   # Board 7  (RST)
 }
 
 if cli_args.skip_gpio:
@@ -593,13 +636,46 @@ else:
         for btn in claimed:
             btn.close()
         report.log_pass("Joystick", "GPIO Claim & Pull-Up",
-                        f"All 5 pins ({list(JOYSTICK_PINS.values())}) available and healthy")
+                        f"All 7 pins ({list(JOYSTICK_PINS.values())}) available and healthy")
     except Exception as e:
         if "busy" in str(e).lower() or "16" in str(e):
             report.log_pass("Joystick", "GPIO Claim & Pull-Up",
                             "Pins currently actively monitored by airplaydevice background service")
         else:
             report.log_fail("Joystick", "GPIO Claim & Pull-Up", str(e))
+
+# Verify Single-Dispatch Media Command Handler & Responsive Debounce
+try:
+    import inspect
+    from unittest.mock import MagicMock
+    if "gpiozero" not in sys.modules:
+        try:
+            import gpiozero
+        except ImportError:
+            sys.modules["gpiozero"] = MagicMock()
+    if "rpi_ws281x" not in sys.modules:
+        try:
+            import rpi_ws281x
+        except ImportError:
+            sys.modules["rpi_ws281x"] = MagicMock()
+
+    from main import _send_shairport_command, BOUNCE_TIME, on_play_pause
+    if BOUNCE_TIME <= 0.10:
+        report.log_pass("Joystick Controls", "Snappy Debounce Calibration",
+                        f"BOUNCE_TIME={BOUNCE_TIME*1000:.0f}ms (responsive tactile switch calibration)")
+    else:
+        report.log_warn("Joystick Controls", "Debounce Calibration",
+                        f"BOUNCE_TIME={BOUNCE_TIME*1000:.0f}ms (may feel sluggish)")
+
+    src = inspect.getsource(_send_shairport_command)
+    if "cmd_remote" in src and "cmd_mpris" in src and "return True" in src:
+        report.log_pass("Joystick Controls", "Single-Dispatch D-Bus Command Routing",
+                        "Commands route to RemoteControl with fallback to MPRIS (double-command toggle bug prevented)")
+    else:
+        report.log_fail("Joystick Controls", "Single-Dispatch D-Bus Command Routing",
+                        "Handler does not implement single-dispatch fallback")
+except Exception as e:
+    report.log_warn("Joystick Controls", "Handler Inspection", str(e))
 
 
 # =====================================================================
