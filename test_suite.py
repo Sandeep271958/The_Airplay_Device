@@ -132,7 +132,7 @@ except Exception as e:
 # =====================================================================
 print("\n--- [3/10] CAVA Audio Spectrum FIFO ---")
 
-FIFO_PATH = "/tmp/cava_fifo"
+FIFO_PATH = "/tmp/cava.fifo"
 if os.path.exists(FIFO_PATH):
     import stat
     if stat.S_ISFIFO(os.stat(FIFO_PATH).st_mode):
@@ -533,6 +533,17 @@ try:
     else:
         report.log_fail("Equalizer Badge", "Sound Wave Badge Rendering (Playing vs Paused)",
                         f"Failed: diff_paused={diff_paused} (must be 0), diff_active={diff_active} (must be >0)")
+
+    # 13. Empty Spectrum & CAVA Zero-Division Resilience
+    f_empty_vis = renderer.render_visualiser([])
+    f_empty_art = renderer.render_art_info(dict(track_meta.snapshot(), art=None), [])
+    f_none_art  = renderer.render_art_info(dict(track_meta.snapshot(), art=None), None)
+    if f_empty_vis.size == (240, 320) and f_empty_art.size == (240, 320) and f_none_art.size == (240, 320):
+        report.log_pass("Visualizer", "Zero-Division & Empty CAVA Spectrum Resilience",
+                        "Rendered full-screen visualiser and mini visualiser with empty and None spectrum arrays without crash")
+    else:
+        report.log_fail("Visualizer", "Zero-Division & Empty CAVA Spectrum Resilience",
+                        "Rendering failed with empty cava_vals array")
 
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))

@@ -655,7 +655,12 @@ def on_vol_up():
     """Increase volume via ALSA softvol and send VolumeUp to AirPlay source."""
     print("[BTN] Volume ▲")
     def _run():
-        subprocess.run(["amixer", "sset", "SoftMaster", "5%+"], check=False)
+        res = subprocess.run(["amixer", "sset", "SoftMaster", "5%+"], capture_output=True, check=False)
+        if res.returncode != 0:
+            for card in ("Headphones", "sndrpihifiberry", "0", "1", "2"):
+                res_c = subprocess.run(["amixer", "-c", card, "sset", "SoftMaster", "5%+"], capture_output=True, check=False)
+                if res_c.returncode == 0:
+                    break
         if state.mode == AppState.MODE_AIRPLAY:
             _send_shairport_command("VolumeUp")
     threading.Thread(target=_run, daemon=True).start()
@@ -665,7 +670,12 @@ def on_vol_down():
     """Decrease volume via ALSA softvol and send VolumeDown to AirPlay source."""
     print("[BTN] Volume ▼")
     def _run():
-        subprocess.run(["amixer", "sset", "SoftMaster", "5%-"], check=False)
+        res = subprocess.run(["amixer", "sset", "SoftMaster", "5%-"], capture_output=True, check=False)
+        if res.returncode != 0:
+            for card in ("Headphones", "sndrpihifiberry", "0", "1", "2"):
+                res_c = subprocess.run(["amixer", "-c", card, "sset", "SoftMaster", "5%-"], capture_output=True, check=False)
+                if res_c.returncode == 0:
+                    break
         if state.mode == AppState.MODE_AIRPLAY:
             _send_shairport_command("VolumeDown")
     threading.Thread(target=_run, daemon=True).start()

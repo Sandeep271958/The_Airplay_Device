@@ -1105,12 +1105,14 @@ class DisplayRenderer:
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
-        num_bars = len(cava_vals)
+        if not cava_vals:
+            cava_vals = [0] * 8
+        num_bars = max(1, len(cava_vals))
         margin   = int(8 * _scale)
         gap      = int(3 * _scale)
         total_gap = gap * (num_bars - 1)
-        bar_w    = (self.w - 2 * margin - total_gap) // num_bars
-        max_h    = self.h - 2 * margin
+        bar_w    = max(2, (self.w - 2 * margin - total_gap) // num_bars)
+        max_h    = max(10, self.h - 2 * margin)
 
         for i, val in enumerate(cava_vals):
             bar_h = int((val / 255.0) * max_h)
@@ -1267,12 +1269,14 @@ class DisplayRenderer:
         Draw a small embedded visualiser (used when album art is missing).
         Has a more ambient/chill aesthetic than the full-screen version.
         """
-        num_bars = len(cava_vals)
+        if not cava_vals:
+            cava_vals = [0] * 8
+        num_bars = max(1, len(cava_vals))
         margin = int(20 * _scale)
         gap = int(4 * _scale)
         total_gap = gap * (num_bars - 1)
-        bar_w = (w - 2 * margin - total_gap) // num_bars
-        max_h = h - 2 * margin
+        bar_w = max(2, (w - 2 * margin - total_gap) // num_bars)
+        max_h = max(10, h - 2 * margin)
 
         for i, val in enumerate(cava_vals):
             bar_h = max(3, int((val / 255.0) * max_h))
@@ -1370,11 +1374,23 @@ class DisplayRenderer:
         try:
             result = subprocess.run(
                 ["iwgetid", "-r"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True, text=True, timeout=1,
             )
-            return result.stdout.strip() or None
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
         except Exception:
-            return None
+            pass
+        try:
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+                capture_output=True, text=True, timeout=1,
+            )
+            for line in result.stdout.splitlines():
+                if line.startswith("yes:"):
+                    return line.split(":", 1)[1].strip() or None
+        except Exception:
+            pass
+        return None
 
 
 # =====================================================================
@@ -1668,34 +1684,34 @@ class DisplayController:
                 audio_mode = self._audio_mode
                 cava_vals  = list(self._cava_vals)
 
-            # Decide what to render
-            has_track = track_meta.has_meta() and connected
-
-            if not playing and not has_track:
-                # Idle (no active session or track loaded) → clock / status
-                frame = self.renderer.render_clock(audio_mode, connected)
-                interval = interval_idle
-            else:
-                # Active track session: playing OR paused
-                meta = track_meta.snapshot()
-                meta["is_playing"] = playing  # ensure synchronized playing flag for flat EQ badge on pause
-                if mode == 0:
-                    frame = self.renderer.render_art_info(meta, cava_vals)
-                elif mode == 1:
-                    frame = self.renderer.render_art_fullscreen(meta, cava_vals)
-                else:
-                    if not playing:
-                        frame = self.renderer.render_art_info(meta, [0] * len(cava_vals))
-                    else:
-                        frame = self.renderer.render_visualiser(cava_vals)
-                interval = interval_active if playing else 0.1
-
-            # Push to hardware
             try:
+                # Decide what to render
+                has_track = track_meta.has_meta() and connected
+
+                if not playing and not has_track:
+                    # Idle (no active session or track loaded) → clock / status
+                    frame = self.renderer.render_clock(audio_mode, connected)
+                    interval = interval_idle
+                else:
+                    # Active track session: playing OR paused
+                    meta = track_meta.snapshot()
+                    meta["is_playing"] = playing  # ensure synchronized playing flag for flat EQ badge on pause
+                    if mode == 0:
+                        frame = self.renderer.render_art_info(meta, cava_vals)
+                    elif mode == 1:
+                        frame = self.renderer.render_art_fullscreen(meta, cava_vals)
+                    else:
+                        if not playing:
+                            frame = self.renderer.render_art_info(meta, [0] * len(cava_vals))
+                        else:
+                            frame = self.renderer.render_visualiser(cava_vals)
+                    interval = interval_active if playing else 0.1
+
+                # Push to hardware
                 self.backend.show(frame)
             except Exception as e:
                 print(f"[TFT] Display error: {e}")
-                time.sleep(1)
+                time.sleep(0.5)
                 continue
 
             elapsed = time.monotonic() - t0
