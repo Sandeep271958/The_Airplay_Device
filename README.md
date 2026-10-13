@@ -28,7 +28,7 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
   * **Non-Inverted Display (`INVOFF`):** Configured with `INVOFF` (`0x20`), eliminating washed-out contrast and negative color artifacts.
 * **Apple SF Pro Rounded Typography Engine:** Rendered with true Apple SF Pro Rounded Bold and SF Compact Rounded typefaces with horizontal ping-pong marquee scrolling and boundary clipping.
 * **3 Display Modes (Cycled via Joystick 'SET'):**
-  * **Mode 0 (Default):** Cover Art + Marquee Track Info + Apple-style Real-Time Progress Bar.
+  * **Mode 0 (Default):** Cover Art + Marquee Song Title & Artist (uncluttered layout, larger typography) + Apple-style Real-Time Progress Bar.
   * **Mode 1:** Edge-to-Edge Full-Screen Album Art.
   * **Mode 2:** Full-Screen Live Frequency Bar Spectrum Visualizer.
 * **Apple StandBy Idle Screen:** Shows status capsule pill (`AirPlay Ready`), large time, bold Day & Date, audio mode, and Wi-Fi connection indicator.

@@ -7,7 +7,7 @@ Renders display frames using Pillow into an in-memory canvas,
 then pushes them to the TFT hardware via a pluggable display backend.
 
 Display Modes (cycled with SET button):
-  Mode 0: Album Art + Track Info  (art top, title/artist/album below)
+  Mode 0: Album Art + Track Info  (art top, song title/artist below, album omitted for clean layout)
   Mode 1: Full-screen Album Art   (edge-to-edge, no text)
   Mode 2: Live Visualiser         (animated frequency bars on TFT)
 
@@ -145,9 +145,9 @@ FONT_CLOCK_TIME = _load_font_bold(int(58 * _scale), preferred="SF-Pro-Rounded-Bo
 FONT_DATE       = _load_font_bold(int(16 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
 FONT_STATUS     = _load_font(int(11 * _scale), preferred="SF-Compact-Rounded.ttf")
 
-# Music screen typography (refined proportions to fit comfortably in 80px bottom strip)
-FONT_TITLE      = _load_font_bold(int(14 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
-FONT_ARTIST     = _load_font(int(12 * _scale), preferred="SF-Compact-Rounded.ttf")
+# Music screen typography (larger proportions with album name removed)
+FONT_TITLE      = _load_font_bold(int(16 * _scale), preferred="SF-Pro-Rounded-Bold.ttf")
+FONT_ARTIST     = _load_font(int(13 * _scale), preferred="SF-Compact-Rounded.ttf")
 FONT_ALBUM      = _load_font(int(10 * _scale), preferred="SF-Compact-Rounded.ttf")
 
 
@@ -992,7 +992,7 @@ class DisplayRenderer:
     def render_art_info(self, meta, cava_vals):
         """
         Top portion: album art (240x240 square).
-        Bottom portion (80px strip): title, artist, album with marquee clipping, plus progress bar.
+        Bottom portion (80px strip): song title and artist with marquee clipping, plus progress bar.
         """
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
         draw = ImageDraw.Draw(img)
@@ -1008,25 +1008,19 @@ class DisplayRenderer:
         # Bottom info strip (y = 240..320)
         max_w = self.w - int(20 * _scale)   # 220px max width with 10px margins
         margin_x = int(10 * _scale)
-        info_y = art_h + int(5 * _scale)    # y = 245
+        info_y = art_h + int(8 * _scale)    # y = 248 (8px clean padding below album art)
 
-        # Title: 14pt SF Pro Rounded Bold with marquee
+        # Title: 16pt SF Pro Rounded Bold with marquee
         draw_marquee_text(img, draw, margin_x, info_y, max_w,
                           meta["title"] or "AirPlay Audio",
                           FONT_TITLE, TEXT_PRIMARY, self.title_marquee)
 
-        # Artist: 12pt SF Compact Rounded with marquee
-        draw_marquee_text(img, draw, margin_x, info_y + int(20 * _scale), max_w,
+        # Artist: 13pt SF Compact Rounded with marquee
+        draw_marquee_text(img, draw, margin_x, info_y + int(23 * _scale), max_w,
                           meta["artist"] or "AirPlay Receiver",
                           FONT_ARTIST, TEXT_SECONDARY, self.artist_marquee)
 
-        # Album: 10pt SF Compact Rounded with marquee (only if present)
-        album_text = meta.get("album") or ""
-        if album_text:
-            draw_marquee_text(img, draw, margin_x, info_y + int(36 * _scale), max_w,
-                              album_text, FONT_ALBUM, (110, 110, 130), self.album_marquee)
-
-        # Progress bar at very bottom: 6px thick, wider 8px margins
+        # Progress bar at very bottom: 6px thick, wider 8px margins (untouched)
         bar_y = self.h - int(12 * _scale)
         bar_h = int(6 * _scale)
         bar_margin = int(8 * _scale)
@@ -1054,7 +1048,7 @@ class DisplayRenderer:
             draw_marquee_text(img, draw, margin_x, info_y, max_w,
                               meta["title"] or "AirPlay Audio",
                               FONT_TITLE, TEXT_PRIMARY, self.title_marquee)
-            draw_marquee_text(img, draw, margin_x, info_y + int(22 * _scale), max_w,
+            draw_marquee_text(img, draw, margin_x, info_y + int(24 * _scale), max_w,
                               meta["artist"] or "",
                               FONT_ARTIST, TEXT_SECONDARY, self.artist_marquee)
 
