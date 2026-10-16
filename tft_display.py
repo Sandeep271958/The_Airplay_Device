@@ -9,7 +9,10 @@ then pushes them to the TFT hardware via a pluggable display backend.
 Display Modes (cycled with SET button):
   Mode 0: Album Art + Track Info  (art top, song title/artist below, album omitted for clean layout)
   Mode 1: Full-screen Album Art   (edge-to-edge, no text)
-  Mode 2: Live Visualiser         (animated frequency bars on TFT)
+  Mode 2: Live Bar Visualiser     (animated frequency bars + bottom track info)
+  Mode 3: Fluid Ribbon Visualiser (Siri-inspired fluid multi-wave oscilloscope + bottom track info)
+  Mode 4: Circular Radial Ring    (360° halo spectrum with album art dial + bottom track info)
+  Mode 5: 3D Starfield Warp       (hyperspace warp tunnel with bass shockwaves + bottom track info)
 
 When idle (no music playing):
   → Clock / status screen (time, mode, Wi-Fi info)
@@ -1020,7 +1023,10 @@ class DisplayRenderer:
     Modes:
       0 — Album Art + Track Info
       1 — Full-screen Album Art
-      2 — Live Visualiser (frequency bars)
+      2 — Live Bar Visualiser (with bottom track info)
+      3 — Fluid Multi-Wave Ribbon (Siri-style fluid oscilloscope + track info)
+      4 — Circular Radial Ring (Halo spectrum with album art dial + track info)
+      5 — 3D Audio-Reactive Starfield Warp Tunnel (with bottom track info)
 
     When idle:
       → Clock / Status screen
@@ -1036,6 +1042,19 @@ class DisplayRenderer:
         self.title_marquee  = MarqueeText(pause_start=2.0, pause_end=1.5, scroll_speed=26.0)
         self.artist_marquee = MarqueeText(pause_start=2.0, pause_end=1.5, scroll_speed=22.0)
         self.album_marquee  = MarqueeText(pause_start=2.5, pause_end=1.5, scroll_speed=20.0)
+
+        # Mode 4: Dial rotation angle & circular alpha mask
+        self._dial_angle = 0.0
+        r_inner = int(54 * (self.w / 240.0))
+        self._dial_mask = Image.new("L", (r_inner * 2, r_inner * 2), 0)
+        mask_draw = ImageDraw.Draw(self._dial_mask)
+        mask_draw.ellipse([0, 0, r_inner * 2 - 1, r_inner * 2 - 1], fill=255)
+
+        # Mode 5: 3D Starfield coordinates (X, Y, Z) and shockwave radius
+        np.random.seed(42)
+        self._star_xy = np.random.uniform(-140.0, 140.0, (80, 2))
+        self._star_z  = np.random.uniform(20.0, 500.0, 80)
+        self._shockwave_radius = 0.0
 
     # ----- Mode 0: Album Art + Track Info -----
 
@@ -1122,30 +1141,83 @@ class DisplayRenderer:
 
         return img
 
-    # ----- Mode 2: Live Visualiser -----
+    # ----- Shared Bottom Info Card for Visualiser Modes -----
 
-    def render_visualiser(self, cava_vals):
-        """Full-screen frequency bar visualiser with gradient colouring."""
+    def _draw_bottom_info_card(self, img, draw, meta, is_dark_card=False):
+        """
+        Shared bottom info card for visualizer modes (Modes 2, 3, 4, 5).
+        Fills y = 236..320 with track title marquee, artist marquee, and 6px Apple pill progress bar.
+        """
+        if meta is None:
+            meta = {}
+
+        card_y = int(236 * _scale)
+
+        if is_dark_card:
+            card_bg = (12, 14, 24)
+            card_border = (42, 48, 70)
+            text_pri = (255, 255, 255)
+            text_sec = (170, 180, 205)
+        else:
+            card_bg = CARD_BG
+            card_border = (222, 226, 238)
+            text_pri = TEXT_PRIMARY
+            text_sec = TEXT_SECONDARY
+
+        # Card container & soft top border
+        draw.rectangle([0, card_y, self.w, self.h], fill=card_bg)
+        draw.line([(0, card_y), (self.w, card_y)], fill=card_border, width=1)
+
+        # Marquee margins & coordinates
+        max_w = self.w - int(20 * _scale)
+        margin_x = int(10 * _scale)
+        title_y = card_y + int(8 * _scale)
+        artist_y = title_y + int(24 * _scale)
+
+        title_text = meta.get("title") or "AirPlay Audio"
+        artist_text = meta.get("artist") or "AirPlay Receiver"
+
+        draw_marquee_text(img, draw, margin_x, title_y, max_w,
+                          title_text, FONT_TITLE, text_pri, self.title_marquee)
+        draw_marquee_text(img, draw, margin_x, artist_y, max_w,
+                          artist_text, FONT_ARTIST, text_sec, self.artist_marquee)
+
+        # Progress bar at very bottom
+        bar_y = self.h - int(12 * _scale)
+        bar_h = int(6 * _scale)
+        bar_margin = int(8 * _scale)
+        self._draw_progress_bar(draw, bar_margin, bar_y, self.w - 2 * bar_margin,
+                                bar_h, meta, is_dark=is_dark_card)
+
+    # ----- Mode 2: Live Bar Visualiser (with Bottom Track Info) -----
+
+    def render_visualiser(self, cava_vals, meta=None):
+        """
+        Mode 2: Live Bar Visualiser with bottom track info card.
+        Gradient frequency bars in the upper stage (y = 0..236),
+        with track title, artist, and progress bar below (y = 236..320).
+        """
         img = Image.new("RGB", (self.w, self.h), BG_COLOR)
         draw = ImageDraw.Draw(img)
 
         if not cava_vals:
             cava_vals = [0] * 8
         num_bars = max(1, len(cava_vals))
-        margin   = int(8 * _scale)
-        gap      = int(3 * _scale)
+        stage_h  = int(236 * _scale)
+        margin   = int(10 * _scale)
+        gap      = int(4 * _scale)
         total_gap = gap * (num_bars - 1)
         bar_w    = max(2, (self.w - 2 * margin - total_gap) // num_bars)
-        max_h    = max(10, self.h - 2 * margin)
+        max_h    = max(10, stage_h - 2 * margin)
 
         for i, val in enumerate(cava_vals):
             bar_h = int((val / 255.0) * max_h)
-            if bar_h < 2:
-                bar_h = 2   # always show a sliver so bars are visible
+            if bar_h < 3:
+                bar_h = 3   # always show a clean baseline sliver so bars are grounded
 
             x = margin + i * (bar_w + gap)
-            y_top = self.h - margin - bar_h
-            y_bot = self.h - margin
+            y_bot = stage_h - margin
+            y_top = y_bot - bar_h
 
             # Draw the bar with a vertical gradient
             segments = 16
@@ -1159,6 +1231,262 @@ class DisplayRenderer:
                 draw.rectangle([x, seg_y, x + bar_w, seg_y + seg_h], fill=color)
                 if seg_y <= y_top:
                     break
+
+            # Floating peak accent cap
+            if val > 15:
+                cap_h = max(2, int(2 * _scale))
+                cap_color = self._gradient_color(min(1.0, val / 255.0 + 0.1))
+                draw.rectangle([x, y_top - cap_h - 1, x + bar_w, y_top - 1], fill=cap_color)
+
+        # Draw bottom track info card
+        self._draw_bottom_info_card(img, draw, meta, is_dark_card=False)
+
+        return img
+
+    # ----- Mode 3: Smooth Multi-Wave Ribbon (Siri / Fluid Oscilloscope) -----
+
+    def render_ribbon_visualiser(self, cava_vals, meta=None):
+        """
+        Mode 3: Smooth Multi-Wave Ribbon (Siri / Fluid Oscilloscope).
+        4 intertwined harmonic sine ribbons rippling across the upper stage (y = 0..236),
+        modulated by audio frequencies and windowed to taper to 0 at screen edges.
+        """
+        img = Image.new("RGB", (self.w, self.h), BG_COLOR)
+        draw = ImageDraw.Draw(img)
+
+        if not cava_vals:
+            cava_vals = [0] * 8
+        cava_extended = list(cava_vals)
+        while len(cava_extended) < 8:
+            cava_extended.append(0)
+
+        is_playing = meta.get("is_playing", False) if meta else any(v > 10 for v in cava_vals)
+        if is_playing:
+            self._vis_step += 0.08
+        else:
+            self._vis_step += 0.01  # serene breathing drift when paused
+
+        stage_h = int(236 * _scale)
+        yc = stage_h // 2
+        xs = np.arange(0, self.w + 1, 2)
+        # Window function: sin(pi*x/W)^1.25 tapers wave to 0 at screen edges
+        win = np.sin(np.pi * xs / self.w) ** 1.25
+
+        # Frequency energies
+        bass   = (cava_extended[0] * 0.6 + cava_extended[1] * 0.4) / 255.0
+        lowmid = (cava_extended[2] * 0.7 + cava_extended[3] * 0.3) / 255.0
+        mid    = (cava_extended[3] * 0.5 + cava_extended[4] * 0.5) / 255.0
+        high   = (cava_extended[5] * 0.5 + cava_extended[6] * 0.3 + cava_extended[7] * 0.2) / 255.0
+
+        base_amp = 3.0 if not is_playing else 5.0
+        max_amp = stage_h * 0.40
+
+        # 4 ribbons: (color, amplitude, frequency, phase_offset, line_width)
+        ribbons = [
+            ((0, 162, 255),  base_amp + bass * max_amp,          1.15, 0.0, 3),
+            ((150, 65, 245), base_amp + lowmid * max_amp * 0.85, 1.75, 1.2, 3),
+            ((255, 45, 125), base_amp + mid * max_amp * 0.75,    2.35, 2.4, 2),
+            ((0, 205, 215),  base_amp + high * max_amp * 0.65,   3.10, 3.7, 2),
+        ]
+
+        # Soft center horizon guideline
+        draw.line([(0, yc), (self.w, yc)], fill=(234, 238, 248), width=1)
+
+        for color, amp, freq, phase_off, line_w in ribbons:
+            ys = yc + win * (amp * np.sin(2 * np.pi * freq * xs / self.w + self._vis_step + phase_off))
+            pts = list(zip(xs.tolist(), ys.tolist()))
+            draw.line(pts, fill=color, width=line_w)
+
+        # Draw bottom track info card
+        self._draw_bottom_info_card(img, draw, meta, is_dark_card=False)
+
+        return img
+
+    # ----- Mode 4: Circular Radial Ring (Halo Spectrum with Album Art Dial) -----
+
+    def render_radial_visualiser(self, cava_vals, meta=None):
+        """
+        Mode 4: Circular Radial Ring (Halo Spectrum with Album Art Dial).
+        Centered circular dial displaying rotated album art (or vinyl turntable if no art),
+        surrounded by a 360-degree chromatic spectrum of 48 frequency rays.
+        """
+        img = Image.new("RGB", (self.w, self.h), BG_COLOR)
+        draw = ImageDraw.Draw(img)
+
+        if not cava_vals:
+            cava_vals = [0] * 8
+        cava_extended = list(cava_vals)
+        while len(cava_extended) < 8:
+            cava_extended.append(0)
+
+        is_playing = meta.get("is_playing", False) if meta else any(v > 10 for v in cava_vals)
+        if is_playing:
+            self._dial_angle = (self._dial_angle + 1.2) % 360.0
+
+        stage_h = int(236 * _scale)
+        xc = self.w // 2
+        yc = stage_h // 2
+        r_inner = int(54 * _scale)
+        r_base  = r_inner + int(5 * _scale)
+        max_spike = int(42 * _scale)
+
+        num_spikes = 48
+        # Smooth chromatic halo of 48 rays
+        for i in range(num_spikes):
+            angle = 2 * math.pi * i / num_spikes
+            # Map ray index across the 8 CAVA bands with smooth interpolation
+            band_idx = int((i / num_spikes) * 8) % 8
+            val = cava_extended[band_idx] if is_playing else 0
+            spike_h = int(3 * _scale) + int((val / 255.0) * max_spike)
+
+            ca = math.cos(angle)
+            sa = math.sin(angle)
+            x1 = xc + int(r_base * ca)
+            y1 = yc + int(r_base * sa)
+            x2 = xc + int((r_base + spike_h) * ca)
+            y2 = yc + int((r_base + spike_h) * sa)
+
+            # Chromatic 360-degree color gradient
+            frac = i / float(num_spikes)
+            r = int(128 + 127 * math.cos(2 * math.pi * frac))
+            g = int(128 + 127 * math.cos(2 * math.pi * frac - 2.094))
+            b = int(128 + 127 * math.cos(2 * math.pi * frac - 4.188))
+            draw.line([(x1, y1), (x2, y2)], fill=(r, g, b), width=2)
+
+        # Draw dial rim circle
+        draw.ellipse([xc - r_base, yc - r_base, xc + r_base, yc + r_base],
+                     outline=(220, 226, 240), width=1)
+
+        # Center Dial: Album Art or Vinyl Turntable
+        dial_diam = r_inner * 2
+        art_source = (meta.get("art") or meta.get("art_info")) if meta else None
+
+        if art_source:
+            # Fit and rotate album art
+            try:
+                dial_art = self._fit_square(art_source, dial_diam, dial_diam)
+                if is_playing and abs(self._dial_angle) > 0.01:
+                    dial_art = dial_art.rotate(self._dial_angle, resample=Image.Resampling.BILINEAR)
+                # Paste with precomputed circular mask
+                img.paste(dial_art, (xc - r_inner, yc - r_inner), self._dial_mask)
+            except Exception:
+                art_source = None
+
+        if not art_source:
+            # Sleek vinyl disc fallback
+            draw.ellipse([xc - r_inner, yc - r_inner, xc + r_inner, yc + r_inner],
+                         fill=(25, 28, 36), outline=(60, 65, 80), width=1)
+            # Concentric vinyl groove rings
+            for g_r in [int(r_inner * 0.8), int(r_inner * 0.62), int(r_inner * 0.45)]:
+                draw.ellipse([xc - g_r, yc - g_r, xc + g_r, yc + g_r],
+                             outline=(42, 46, 58), width=1)
+            # Center label
+            lbl_r = int(r_inner * 0.32)
+            draw.ellipse([xc - lbl_r, yc - lbl_r, xc + lbl_r, yc + lbl_r],
+                         fill=(0, 122, 255), outline=(255, 255, 255), width=1)
+            # Spindle hole
+            spindle_r = max(2, int(3 * _scale))
+            draw.ellipse([xc - spindle_r, yc - spindle_r, xc + spindle_r, yc + spindle_r],
+                         fill=(255, 255, 255))
+
+        # Thin outer bezel ring around art
+        draw.ellipse([xc - r_inner, yc - r_inner, xc + r_inner, yc + r_inner],
+                     outline=(255, 255, 255) if art_source else (80, 85, 105), width=1)
+
+        # Draw bottom track info card
+        self._draw_bottom_info_card(img, draw, meta, is_dark_card=False)
+
+        return img
+
+    # ----- Mode 5: 3D Audio-Reactive Starfield Warp Tunnel -----
+
+    def render_starfield_visualiser(self, cava_vals, meta=None):
+        """
+        Mode 5: 3D Audio-Reactive Starfield Warp Tunnel.
+        80 stars streaming outward in true 3D perspective projection (X/Z, Y/Z).
+        Bass energy controls warp speed and triggers expanding shockwave pulses.
+        """
+        # Deep space obsidian background
+        img = Image.new("RGB", (self.w, self.h), (10, 12, 18))
+        draw = ImageDraw.Draw(img)
+
+        if not cava_vals:
+            cava_vals = [0] * 8
+        cava_extended = list(cava_vals)
+        while len(cava_extended) < 8:
+            cava_extended.append(0)
+
+        is_playing = meta.get("is_playing", False) if meta else any(v > 10 for v in cava_vals)
+        bass = (cava_extended[0] * 0.65 + cava_extended[1] * 0.35)
+
+        # Dynamic warp speed
+        if is_playing:
+            speed = 8.0 + (bass / 255.0) * 36.0
+        else:
+            speed = 2.0  # gentle cruise when paused
+
+        stage_h = int(236 * _scale)
+        xc = self.w // 2
+        yc = stage_h // 2
+        focal = 135.0 * _scale
+
+        # Trigger shockwave ring on heavy bass kicks
+        if is_playing and bass > 165 and self._shockwave_radius <= 0:
+            self._shockwave_radius = 10.0
+
+        # Advance stars in Z
+        self._star_z -= speed
+        reset_mask = self._star_z <= 15.0
+        num_reset = np.sum(reset_mask)
+        if num_reset > 0:
+            self._star_xy[reset_mask] = np.random.uniform(-140.0, 140.0, (num_reset, 2))
+            self._star_z[reset_mask] = np.random.uniform(420.0, 500.0, num_reset)
+
+        # Projected screen coordinates
+        prev_z = self._star_z + speed
+        xs = xc + (self._star_xy[:, 0] * focal / self._star_z).astype(int)
+        ys = yc + (self._star_xy[:, 1] * focal / self._star_z).astype(int)
+        pxs = xc + (self._star_xy[:, 0] * focal / prev_z).astype(int)
+        pys = yc + (self._star_xy[:, 1] * focal / prev_z).astype(int)
+
+        # Draw stars and velocity streaks
+        for i in range(len(self._star_z)):
+            x, y = xs[i], ys[i]
+            px, py = pxs[i], pys[i]
+            if 0 <= x < self.w and 0 <= y < stage_h:
+                z = self._star_z[i]
+                brightness = max(40, min(255, int(255 * (1.0 - z / 500.0))))
+                # Close stars are brilliant white/cyan; distant stars are deep blue
+                if z < 140:
+                    star_col = (brightness, brightness, 255)
+                    streak_w = 2 if is_playing else 1
+                elif z < 280:
+                    star_col = (int(brightness * 0.7), int(brightness * 0.85), brightness)
+                    streak_w = 1
+                else:
+                    star_col = (int(brightness * 0.5), int(brightness * 0.6), brightness)
+                    streak_w = 1
+
+                if abs(x - px) > 1 or abs(y - py) > 1:
+                    draw.line([(px, py), (x, y)], fill=star_col, width=streak_w)
+                else:
+                    draw.point((x, y), fill=star_col)
+
+        # Render expanding bass shockwave pulse
+        if self._shockwave_radius > 0:
+            r = int(self._shockwave_radius)
+            alpha_frac = max(0.0, 1.0 - (r / 110.0))
+            ring_r = int(255 * alpha_frac)
+            ring_g = int(200 * alpha_frac)
+            ring_b = int(255 * alpha_frac)
+            draw.ellipse([xc - r, yc - r, xc + r, yc + r],
+                         outline=(ring_r, ring_g, ring_b), width=2)
+            self._shockwave_radius += 10.0
+            if self._shockwave_radius > 110.0:
+                self._shockwave_radius = 0.0
+
+        # Draw bottom track info card (Dark theme with white text & cyan progress)
+        self._draw_bottom_info_card(img, draw, meta, is_dark_card=True)
 
         return img
 
@@ -1251,11 +1579,14 @@ class DisplayRenderer:
         x = (self.w - tw) // 2
         draw.text((x, y), text, font=font, fill=color)
 
-    def _draw_progress_bar(self, draw, x, y, w, h, meta):
+    def _draw_progress_bar(self, draw, x, y, w, h, meta, is_dark=False):
         """
         Draw a track progress bar with Apple-style rounded pill track,
         crisp active fill, and prominent leading scrubber head.
+        Supports both light and dark card aesthetics.
         """
+        if meta is None:
+            meta = {}
         duration = meta.get("prog_duration", 0.0)
         frac = meta.get("prog_frac", 0.0)
         if duration <= 0.0:
@@ -1266,17 +1597,21 @@ class DisplayRenderer:
 
         radius = max(2, h // 2)
 
-        # 1. Soft-grey pill track background with subtle border
-        draw.rounded_rectangle([x, y, x + w, y + h], radius=radius,
-                               fill=PROGRESS_BG, outline=(210, 216, 230), width=1)
+        track_bg = (35, 42, 60) if is_dark else PROGRESS_BG
+        track_outline = (55, 65, 90) if is_dark else (210, 216, 230)
+        fill_color = (0, 195, 255) if is_dark else PROGRESS_FG
 
-        # 2. Active progress fill (bright iOS Blue) & Scrubber Thumb Indicator
+        # 1. Soft pill track background with subtle border
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=radius,
+                               fill=track_bg, outline=track_outline, width=1)
+
+        # 2. Active progress fill (bright blue) & Scrubber Thumb Indicator
         if duration > 0.0:
             if frac > 0.0:
                 fill_w = int(w * frac)
                 fill_w = max(radius * 2, min(w, fill_w))
                 draw.rounded_rectangle([x, y, x + fill_w, y + h], radius=radius,
-                                       fill=PROGRESS_FG)
+                                       fill=fill_color)
 
             # 3. Modern Apple scrubber head thumb indicator at current playback point
             dot_cx = x + int(w * frac)
@@ -1284,9 +1619,9 @@ class DisplayRenderer:
             dot_cy = y + radius
             dot_r = radius + 2  # 5px radius (10px diameter) on 6px bar
 
-            # Crisp white thumb with bright iOS blue rim
+            # Crisp white thumb with bright rim
             draw.ellipse([dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r],
-                         fill=(255, 255, 255), outline=PROGRESS_FG, width=1)
+                         fill=(255, 255, 255), outline=fill_color, width=1)
 
     def _draw_mini_vis(self, draw, x, y, w, h, cava_vals):
         """
@@ -1577,7 +1912,7 @@ class DisplayController:
     Manages the display lifecycle.  Call `run()` in a background thread.
 
     External interface (called from main.py):
-      - set_mode(mode_int)     — cycle display mode (0, 1, 2)
+      - set_mode(mode_int)     — cycle display mode (0..5)
       - set_playing(bool)      — playing vs idle
       - set_connected(bool)    — connected vs disconnected
       - set_audio_mode(str)    — "AIRPLAY" or "BLUETOOTH"
@@ -1594,7 +1929,7 @@ class DisplayController:
 
         # State (thread-safe via a lock)
         self._lock       = threading.Lock()
-        self._mode       = 0         # 0=art+info, 1=fullscreen, 2=visualiser
+        self._mode       = 0         # 0=art+info, 1=fullscreen, 2=bars, 3=ribbon, 4=radial, 5=starfield
         self._playing    = False
         self._connected  = False
         self._audio_mode = "AIRPLAY"
@@ -1605,11 +1940,11 @@ class DisplayController:
 
     def set_mode(self, mode):
         with self._lock:
-            self._mode = mode % 3
+            self._mode = mode % 6
 
     def cycle_mode(self):
         with self._lock:
-            self._mode = (self._mode + 1) % 3
+            self._mode = (self._mode + 1) % 6
             return self._mode
 
     @property
@@ -1732,11 +2067,16 @@ class DisplayController:
                         frame = self.renderer.render_art_info(meta, cava_vals)
                     elif mode == 1:
                         frame = self.renderer.render_art_fullscreen(meta, cava_vals)
+                    elif mode == 2:
+                        frame = self.renderer.render_visualiser(cava_vals, meta)
+                    elif mode == 3:
+                        frame = self.renderer.render_ribbon_visualiser(cava_vals, meta)
+                    elif mode == 4:
+                        frame = self.renderer.render_radial_visualiser(cava_vals, meta)
+                    elif mode == 5:
+                        frame = self.renderer.render_starfield_visualiser(cava_vals, meta)
                     else:
-                        if not playing:
-                            frame = self.renderer.render_art_info(meta, [0] * len(cava_vals))
-                        else:
-                            frame = self.renderer.render_visualiser(cava_vals)
+                        frame = self.renderer.render_art_info(meta, cava_vals)
                     interval = interval_active if playing else 0.1
 
                 # Push to hardware

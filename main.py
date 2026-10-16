@@ -773,10 +773,17 @@ def on_play_pause():
 
 
 def on_vis_mode():
-    """Cycle through visualiser / display modes."""
-    new_mode = (state.vis_mode + 1) % 3
+    """Cycle through visualiser / display modes (0..5)."""
+    new_mode = (state.vis_mode + 1) % 6
     state.vis_mode = new_mode
-    names = ["Art + Info", "Full-screen Art", "Live Visualiser"]
+    names = [
+        "Album Art + Info",
+        "Full-screen Album Art",
+        "Live Bar Visualiser",
+        "Fluid Ribbon Visualiser",
+        "Circular Radial Halo",
+        "3D Starfield Warp Tunnel"
+    ]
     print(f"[BTN] Display mode → {names[new_mode]}")
     if TFT_AVAILABLE:
         display_controller.set_mode(new_mode)

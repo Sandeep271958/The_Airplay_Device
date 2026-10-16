@@ -62,7 +62,7 @@ All inputs configure active-low with internal pull-ups (`pull_up=True`):
 | **LEFT** | Previous Track | **GPIO 22** | **Pin 15** | **🟣 Purple** | Shairport Sync Prev |
 | **RIGHT** | Next Track | **GPIO 23** | **Pin 16** | **🔵 Blue** | Shairport Sync Next |
 | **MID** | Play / Pause | **GPIO 26** | **Pin 37** | **🟢 Green** | Toggle Play / Pause |
-| **SET** | Cycle Display Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** | Info ↔ Art ↔ Visualizer |
+| **SET** | Cycle Display Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** | Cycle 6 Modes (Art+Info ↔ Full Art ↔ Bars ↔ Ribbon ↔ Halo ↔ Starfield) |
 | **RST** | Toggle Mode | **GPIO 4** | **Pin 7** | **🟠 Orange** | AirPlay ↔ Bluetooth (1.0s hold) |
 
 ### 3.3. WS2812B LEDs (8×8 Matrix & Status Indicator Daisy-Chain)

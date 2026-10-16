@@ -28,11 +28,15 @@ The codebase and installation scripts auto-detect the board at runtime, preservi
   * **RGB Subpixel Mapping:** Configured with `MADCTL` bit 3 = 0, ensuring exact color fidelity without Red/Blue swapping.
   * **Non-Inverted Display (`INVOFF`):** Configured with `INVOFF` (`0x20`), eliminating washed-out contrast and negative color artifacts.
 * **Apple SF Pro Rounded Typography Engine:** Rendered with true Apple SF Pro Rounded Bold and SF Compact Rounded typefaces with horizontal ping-pong marquee scrolling and boundary clipping.
-* **3 Display Modes (Cycled via Joystick 'SET'):**
+* **6 Display Modes (Cycled via Joystick 'SET'):**
   * **Mode 0 (Default):** Cover Art + Animated Sound Wave EQ Badge + Marquee Song Title & Artist + Apple-style Real-Time Progress Bar.
   * **Mode 1:** Edge-to-Edge Full-Screen Album Art + Animated Sound Wave EQ Badge.
-  * **Mode 2:** Full-Screen Live Frequency Bar Spectrum Visualizer.
+  * **Mode 2:** Live Frequency Bar Spectrum Visualizer + Bottom Track Info Card (Title, Artist marquee, Progress bar).
+  * **Mode 3:** Smooth Multi-Wave Fluid Ribbon Visualizer (Siri / Liquid Oscilloscope) + Bottom Track Info Card.
+  * **Mode 4:** Circular Radial Ring Visualizer (360° Halo Spectrum with Album Art Dial / Vinyl fallback) + Bottom Track Info Card.
+  * **Mode 5:** 3D Audio-Reactive Starfield Warp Tunnel (Hyperspace with bass shockwaves) + Dark Glassmorphic Track Info Card.
 * **Dynamic Equalizer / Sound Wave Status Badge:** Rendered over the bottom-right corner of the album art in Mode 0 and Mode 1. Features 4 animated vertical equalizer bars that dance organically to live CAVA frequency spectrum when playing, and settle flat and motionless when paused for an instant visual status cue.
+* **Intelligent Pause Settling:** When music is paused, all visualizer modes (Modes 2, 3, 4, 5) settle down to a calm resting state while preserving the bottom track info card (song title, artist marquee, and progress bar).
 * **Apple StandBy Idle Screen:** Shows status capsule pill (`AirPlay Ready`), large time, bold Day & Date, audio mode, and 30-second cached Wi-Fi connection indicator.
 
 ### 2. Intelligent Real-Time Progress Bar & Timeline Engine

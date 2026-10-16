@@ -614,6 +614,45 @@ try:
         report.log_fail("Visualizer", "Zero-Division & Empty CAVA Spectrum Resilience",
                         "Rendering failed with empty cava_vals array")
 
+    # 14. 6-Mode TFT Display Suite (Modes 0 to 5)
+    f_m2 = renderer.render_visualiser([100, 150, 200, 80, 60, 40, 20, 10], snap_active)
+    f_m3 = renderer.render_ribbon_visualiser([180, 140, 120, 100, 80, 60, 40, 20], snap_active)
+    f_m3_pause = renderer.render_ribbon_visualiser([0] * 8, snap_paused)
+    f_m4 = renderer.render_radial_visualiser([200, 180, 150, 120, 90, 70, 50, 30], snap_active)
+    f_m4_noart = renderer.render_radial_visualiser([200, 180, 150, 120, 90, 70, 50, 30], dict(snap_active, art=None, art_info=None))
+    f_m5 = renderer.render_starfield_visualiser([240, 200, 160, 120, 80, 60, 40, 20], snap_active)
+    f_m5_pause = renderer.render_starfield_visualiser([0] * 8, snap_paused)
+
+    all_frames_ok = all(
+        f is not None and f.size == (240, 320) and f.mode == "RGB"
+        for f in [f_m2, f_m3, f_m3_pause, f_m4, f_m4_noart, f_m5, f_m5_pause]
+    )
+
+    if all_frames_ok:
+        report.log_pass("Display Modes", "6-Mode Display Engine (Modes 0..5)",
+                        "Successfully rendered Mode 2 (Bars), Mode 3 (Fluid Ribbon), Mode 4 (Radial Halo + Vinyl fallback), Mode 5 (3D Starfield Warp) under playing & paused states")
+    else:
+        report.log_fail("Display Modes", "6-Mode Display Engine (Modes 0..5)",
+                        "One or more visualizer frames failed to render or returned invalid dimensions")
+
+    # 15. SET Button 6-Mode Cycle Logic (0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 0)
+    from tft_display import display_controller
+    initial_mode = display_controller._mode
+    cycle_history = []
+    for _ in range(6):
+        m = display_controller.cycle_mode()
+        cycle_history.append(m)
+    # Return to initial mode
+    display_controller.set_mode(initial_mode)
+
+    expected_cycle = [(initial_mode + i + 1) % 6 for i in range(6)]
+    if cycle_history == expected_cycle and display_controller._mode == initial_mode:
+        report.log_pass("Display Modes", "SET Button 6-Mode Modulo Cycle",
+                        f"Verified smooth sequential toggle: {cycle_history} -> initial {initial_mode}")
+    else:
+        report.log_fail("Display Modes", "SET Button 6-Mode Modulo Cycle",
+                        f"Cycle mismatch: got {cycle_history}, expected {expected_cycle}")
+
 except Exception as e:
     report.log_fail("Metadata Pipeline", "Import / Execution Error", str(e))
 
