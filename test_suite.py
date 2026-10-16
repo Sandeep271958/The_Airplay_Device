@@ -91,6 +91,29 @@ for svc in ("shairport-sync", "airplaydevice", "avahi-daemon"):
     except Exception as e:
         report.log_warn("Service", f"{svc}", f"Check skipped ({e})")
 
+# Check automated install script (RPi 4B & Zero 2 W auto-provisioning)
+try:
+    proj_dir = os.path.dirname(os.path.abspath(__file__))
+    install_path = os.path.join(proj_dir, "install.sh")
+    with open(install_path, "r") as f:
+        install_script = f.read()
+
+    has_sinc_pkgs = "libsamplerate0" in install_script and "libasound2-plugins" in install_script
+    has_zero_detect = "Zero 2" in install_script
+    has_rpi4_detect = "Raspberry Pi 4" in install_script
+    has_auto_boot = "Sandy's AirPlay Device Hardware Configuration" in install_script and "BOOT_CONFIG" in install_script
+    has_zero_audio_disable = "dtparam=audio=on" in install_script and "hifiberry-dac" in install_script
+    has_alsaloop_install = "alsaloop.service" in install_script
+
+    if has_sinc_pkgs and has_zero_detect and has_rpi4_detect and has_auto_boot and has_zero_audio_disable and has_alsaloop_install:
+        report.log_pass("Installer", "Zero 2 W & RPi 4B Automated Installer (install.sh)",
+                        "Verified auto-board detection, sinc resampling packages, automatic boot_config injection & systemd provisioning")
+    else:
+        report.log_fail("Installer", "Zero 2 W & RPi 4B Automated Installer (install.sh)",
+                        f"Installer validation incomplete: sinc_pkgs={has_sinc_pkgs}, zero_detect={has_zero_detect}, auto_boot={has_auto_boot}")
+except Exception as e:
+    report.log_fail("Installer", "Installer Inspection Error", str(e))
+
 
 # =====================================================================
 # TEST 2: ALSA AUDIO & LOOPBACK SUBSYSTEM

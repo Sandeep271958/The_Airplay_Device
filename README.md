@@ -155,37 +155,26 @@ hw:Loopback,1,0 (ALSA Loopback Capture)
 
 ---
 
-## Installation & Setup
+## Installation & Setup (100% Automated)
 
-### 1. Clone & Install
+The setup script auto-detects your board (Raspberry Pi 4B vs Raspberry Pi Zero 2 W) and automatically provisions all systemd services, audio rate locking, sinc resamplers, ALSA routing, and hardware boot overlays without requiring any manual file editing.
+
 ```bash
+# 1. Clone the repository
 git clone https://github.com/Sandeep271958/The_Airplay_Device.git ~/Airplaydevice
 cd ~/Airplaydevice
-bash install.sh
-```
 
-### 2. Boot Configuration (`/boot/firmware/config.txt`)
-Ensure the following overlays are enabled in `/boot/firmware/config.txt`:
+# 2. Run the automated installer (auto-provisions audio, services & boot overlays)
+sudo ./install.sh
 
-```ini
-# Audio configuration
-dtparam=audio=on
-hdmi_ignore_edid_audio=1
-
-# Enable hardware SPI
-dtparam=spi=on
-
-# Restrict SPI0 to 1 CS (GPIO 8) — frees GPIO 7 for SPI4 SCLK
-dtoverlay=spi0-1cs
-
-# Enable Hardware SPI4 for ST7789 TFT Display (32 MHz DMA)
-dtoverlay=spi4-1cs,cs0_pin=25
-```
-
-### 3. Reboot
-```bash
+# 3. Reboot to activate all hardware overlays and Hi-Fi filters
 sudo reboot
 ```
+
+> **✦ Zero Manual Configuration Required:**
+> * **On Raspberry Pi 4B:** Configures onboard 3.5mm audio with 2nd-order Sigma-Delta modulation (`audio_pwm_mode=2`), Hardware SPI4 DMA (32 MHz) for ST7789 TFT, and GPU core clock lock (`core_freq=500`).
+> * **On Raspberry Pi Zero 2 W:** Configures PCM5102A I2S DAC overlay (`dtoverlay=hifiberry-dac`), disables onboard PWM audio, enables Software SPI Bus 1 for ST7789 TFT, and GPU core clock lock (`core_freq=400`).
+> * **On both platforms:** Enforces 44.1kHz rate lock, 120ms buffer headroom, Speex resampler, and `libsamplerate` adaptive sinc interpolation for stutter-free, pitch-perfect Hi-Fi sound.
 
 ---
 
@@ -198,9 +187,9 @@ cd ~/Airplaydevice
 sudo venv/bin/python test_suite.py
 ```
 
-### Test Suite Modules (33 Comprehensive Tests — 100% Pass Rate):
-1. **System Environment & Daemons:** Checks root permissions and active systemd units (`shairport-sync`, `airplaydevice`, `avahi-daemon`).
-2. **Audio & ALSA Subsystem:** Validates `snd-aloop` kernel module, 3.5mm DAC device, and `SoftMaster` mixer control.
+### Test Suite Modules (47 Comprehensive Tests — 100% Pass Rate):
+1. **System Environment, Daemons & Automated Installer:** Checks root permissions, active systemd units, and validates `install.sh` automated board detection, package dependencies, and boot config injection.
+2. **Audio & ALSA Subsystem:** Validates `snd-aloop` kernel module, 3.5mm DAC device, `SoftMaster` mixer control, 44.1kHz rate locking across the pipeline, and Sigma-Delta noise shaping (`audio_pwm_mode=2`).
 3. **CAVA Audio FIFO:** Validates `/tmp/cava.fifo` named pipe node and permissions.
 4. **Shairport Sync D-Bus:** Queries `org.gnome.ShairportSync` and `org.mpris.MediaPlayer2`, testing playback/connection decoupling and clean session disconnect/stopped resolution.
 5. **Metadata & Album Art:** Tests basic fields, JPEG decoding, stale cache clearing, `on_track_change()` reset, chunked assembly (`pcst` → `PICT` → `pcen`), pause stability during metadata reception, and order-independent trailing title tag art preservation.

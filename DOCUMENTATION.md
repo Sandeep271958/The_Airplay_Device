@@ -220,8 +220,8 @@ To resolve audio dropouts, unnatural high-frequency pitch upshifts ("chipmunk ef
 The repository includes a comprehensive automated test and calibration suite:
 
 1. **Integrated Test Suite (`test_suite.py`):**
-   * **46 critical unit and integration tests** validating:
-     * Daemon services & configuration integrity.
+   * **47 critical unit and integration tests** validating:
+     * Daemon services, configuration integrity, and automated installer validation.
      * ALSA loopback routing and mixer fallbacks.
      * 44.1kHz sample rate locking, headroom buffers & Sigma-Delta noise shaping.
      * WS2812B pinout, progressive pixel mapping, thermal limits, and idle blanking.
@@ -261,12 +261,28 @@ The repository includes a comprehensive automated test and calibration suite:
 
 ## 8. Deployment & Service Management
 
-### 8.1. System Services
+### 8.1. One-Step Automated Provisioning (`install.sh`)
+The automated installer provisions a clean Raspberry Pi OS Lite 64-bit installation in a single command without manual editing:
+* **Board Auto-Detection:** Introspects `/proc/device-tree/model` to distinguish between Raspberry Pi 4B (prototype) and Raspberry Pi Zero 2 W (production).
+* **Audio Packages & Resamplers:** Installs `shairport-sync`, `alsa-utils`, `libsamplerate0`, `libasound2-plugins`, and `cava`.
+* **Configuration Mapping:** Dynamically places `asound_rpi4b.conf` or `asound.conf`, locking 44.1kHz rate and Speex conversion.
+* **Service Linking:** Configures paths in `shairport-sync.conf`, `alsaloop.service`, and `airplaydevice.service`, enabling them in systemd.
+* **Boot Overlays Injection:** Automatically writes device-tree overlays and frequency locks to `/boot/firmware/config.txt` (or `/boot/config.txt`) with timestamped backups and idempotent section markers.
+
+```bash
+# Provisioning a new board (e.g., Raspberry Pi Zero 2 W):
+git clone https://github.com/Sandeep271958/The_Airplay_Device.git ~/Airplaydevice
+cd ~/Airplaydevice
+sudo ./install.sh
+sudo reboot
+```
+
+### 8.2. System Services
 * **`airplaydevice.service`:** Main Python controller handling the display, matrix visualizer, D-Bus state, and rocker controls.
 * **`alsaloop.service`:** Relays audio from `hw:Loopback,1,0` to `SoftMaster` → physical audio output.
 * **`shairport-sync.service`:** Bit-perfect AirPlay audio daemon.
 
-### 8.2. Quick Commands
+### 8.3. Quick Commands
 
 ```bash
 # Pull latest updates from Git
