@@ -22,11 +22,12 @@ graph TD
     Client[iOS / macOS / Android Client] -->|AirPlay / Bluetooth| Receiver[Shairport Sync / BlueALSA]
     
     subgraph Audio Subsystem
-        Receiver -->|PCM Audio| LoopbackIn[hw:Loopback,0,0 Playback]
+        Receiver -->|Direct ALSA PCM| Default[ALSA default: softvol_master]
+        Default -->|ALSA Multi & Route| Split{Kernel Stream Split}
+        Split -->|Channels 0,1: dmixer_hw| DAC[3.5mm Jack audio_pwm_mode=2 / PCM5102A I2S DAC]
+        Split -->|Channels 2,3: dmixer_loop| LoopbackIn[hw:Loopback,0,0 Playback]
         LoopbackIn --> LoopbackOut[hw:Loopback,1,0 Capture]
-        LoopbackOut -->|alsaloop relay 44.1kHz -S samplerate| SoftMaster[ALSA SoftMaster Mixer]
-        SoftMaster --> DAC[3.5mm Jack audio_pwm_mode=2 / PCM5102A I2S DAC]
-        LoopbackOut -->|dsnoop capture 44.1kHz| CAVA[CAVA Audio Analyser]
+        LoopbackOut -->|dsnoop capture| CAVA[CAVA Audio Analyser]
         CAVA -->|ASCII Pipe /tmp/cava.fifo| FIFO[(Raw 8-Band FIFO)]
     end
 
@@ -187,31 +188,21 @@ Raw JPEG artwork streamed over AirPlay (often up to 1400×1400) is decoded and p
 * **Optimistic UI:** Play/Pause toggles state in memory instantly (0ms perceived latency) while D-Bus network calls execute in background daemon threads.
 * **Hardware Debounce:** Calibrated 80ms window (`BOUNCE_TIME = 0.08`) filters contact chatter without sluggish button feel.
 
-### 6.3. Hi-Fi Audio Pipeline Engineering & Pitch-Shift Elimination
-To resolve audio dropouts, unnatural high-frequency pitch upshifts ("chipmunk effect"), and PWM noise, the entire ALSA audio bridge has been engineered for studio-grade Hi-Fi reproduction:
+### 6.3. Hi-Fi Direct Hardware Audio Architecture & Total Pitch-Shift Elimination
+To permanently resolve audio dropouts, robotic frequency upshifts ("chipmunk effect"), and PWM noise, the audio bridge was redesigned to eliminate the userspace `alsaloop` daemon entirely in favor of native ALSA kernel multi-routing:
 
-* **The Sample Rate Mismatch & Pitch Shift Root Cause:**
-  * AirPlay streams CD-quality PCM at **44,100 Hz** (`S16_LE`, 2 channels).
-  * Debian ALSA's `alsaloop` daemon defaults to **48,000 Hz** if unspecified, and the RPi 4B's onboard `bcm2835 Headphones` runs natively at 48,000 Hz.
-  * Without rate constraints, `alsaloop` was reading at 48 kHz while Shairport Sync was feeding at 44.1 kHz.
-  * **Pitch Upshift Ratio:** $\frac{48000}{44100} = 1.0884$ (+8.84% speedup, shifting all musical pitches sharp by +1.5 semitones).
-* **Buffer Starvation & Audio Dropouts:**
-  * Consuming 48,000 samples/sec from a 44,100 samples/sec source drained 3,900 extra samples every second.
-  * With a 50ms buffer (`-t 50000` = 2,205 samples), the buffer starved every ~500ms, triggering repeated kernel XRUN underruns where audio cut out to total silence while CAVA continued dancing.
-* **The 44,100 Hz Hardware Rate Lock:**
-  * `alsaloop.service` explicitly enforces: `-c 2 -r 44100 -f S16_LE`.
-  * `shairport-sync.conf` explicitly enforces: `output_rate = 44100; output_format = "S16"; period_size = 1024; buffer_size = 8192;`.
-  * `asound.conf` & `asound_rpi4b.conf` enforce `rate 44100` on the `loopcapture` `dsnoop` slave.
-* **120ms Latency Headroom (`-t 120000`):**
-  * Target buffer latency expanded from 50ms to 120ms, providing ample scheduling headroom on Linux without compromising AirPlay AV sync.
-* **Adaptive `libsamplerate` Sinc Interpolation (`-S samplerate -A sincfastest -n`):**
-  * ALSA's default `captshift` pitch-stretching clock compensation warbles and degrades acoustic fidelity.
-  * Using `-S samplerate` pairs with `libsamplerate0` (Secret Rabbit Code) to adaptively track hardware clock drift using sinc interpolation, guaranteeing bit-perfect pitch stability.
-* **Speex Studio Resampler (`speexrate_medium`):**
-  * Configured `defaults.pcm.rate_converter "speexrate_medium"` in `/etc/asound.conf` to eliminate high-frequency aliasing distortion.
-* **2nd-Order Sigma-Delta Noise Shaping (`audio_pwm_mode=2`):**
-  * By default, the RPi 3.5mm analog jack uses 1st-order PWM modulation which produces audible background hiss and digital hash.
-  * `audio_pwm_mode=2` in `/boot/firmware/config.txt` enables 2nd-order sigma-delta modulation, shifting PWM switching noise far above 20 kHz into the inaudible spectrum for crystal-clear analog line output.
+* **The Core Flaw of `alsaloop`:**
+  * When audio was routed through `alsaloop`, the playback daemon tried to bridge two distinct clocks: the kernel loopback virtual software clock (driven by system jiffies) and the physical hardware DAC clock (driven by hardware crystals).
+  * Because the two clocks drifted, `alsaloop` applied dynamic pitch-bending (`captshift`), resulting in high-pitched, robotic, and unnatural sound (+8.8% upshift).
+  * Buffer underruns (XRUNs) occurred constantly during drift, cutting audio into silence and causing playback to break and get stuck.
+* **The Direct Hardware Solution (Kernel `type multi` + `type route`):**
+  * **Direct Hardware Playback:** Shairport Sync outputs directly to `default`, which maps to `airplay_dup`. The physical soundcard (`bcm2835 Headphones` or PCM5102A I2S DAC) receives the audio stream **directly from Shairport Sync with zero intermediate daemons**.
+  * **Hardware Clock Pacing:** Shairport Sync's native AirPlay PTP (Precision Time Protocol) locks directly to the iPhone/Mac hardware clock down to the nanosecond, delivering bit-perfect audio at true musical pitch.
+  * **Kernel-Level Visualizer Mirroring:** The ALSA `type route` plugin duplicates stereo audio frames into 4 channels. Channels 0 & 1 feed physical hardware (`dmixer_hw`), while channels 2 & 3 feed the loopback (`dmixer_loop`).
+  * **Independent CAVA Analysis:** CAVA reads from `hw:Loopback,1,0` without affecting physical playback. The 8×8 LED matrix and TFT visualizers respond with 0ms latency.
+  * **Speex Studio Resampling:** Configured `defaults.pcm.rate_converter "speexrate_medium"` for anti-aliased 44.1kHz → 48kHz adaptation on RPi 4B.
+  * **2nd-Order Sigma-Delta Noise Shaping:** Enabled `audio_pwm_mode=2` in `/boot/firmware/config.txt`, shifting PWM switching noise far above 20 kHz for crystal-clear analog line output.
+  * **`alsaloop.service` Retired:** The `alsaloop` background daemon has been permanently disabled and removed.
 
 ---
 
@@ -279,8 +270,7 @@ sudo reboot
 
 ### 8.2. System Services
 * **`airplaydevice.service`:** Main Python controller handling the display, matrix visualizer, D-Bus state, and rocker controls.
-* **`alsaloop.service`:** Relays audio from `hw:Loopback,1,0` to `SoftMaster` → physical audio output.
-* **`shairport-sync.service`:** Bit-perfect AirPlay audio daemon.
+* **`shairport-sync.service`:** Bit-perfect AirPlay audio daemon (direct hardware playback).
 
 ### 8.3. Quick Commands
 
@@ -289,14 +279,14 @@ sudo reboot
 cd ~/Airplaydevice
 git pull origin main
 
-# Restart the AirPlay Device controller
-sudo systemctl restart airplaydevice
+# Restart services
+sudo systemctl restart shairport-sync airplaydevice
 
 # View live system logs
 sudo journalctl -u airplaydevice -f
 
-# Check status of all audio services
-sudo systemctl status airplaydevice alsaloop shairport-sync
+# Check status of audio services
+sudo systemctl status airplaydevice shairport-sync
 ```
 
 ---

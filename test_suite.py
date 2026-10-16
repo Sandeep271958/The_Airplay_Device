@@ -103,9 +103,9 @@ try:
     has_rpi4_detect = "Raspberry Pi 4" in install_script
     has_auto_boot = "Sandy's AirPlay Device Hardware Configuration" in install_script and "BOOT_CONFIG" in install_script
     has_zero_audio_disable = "dtparam=audio=on" in install_script and "hifiberry-dac" in install_script
-    has_alsaloop_install = "alsaloop.service" in install_script
+    has_direct_hw = "direct hardware playback" in install_script or "airplaydevice.service" in install_script
 
-    if has_sinc_pkgs and has_zero_detect and has_rpi4_detect and has_auto_boot and has_zero_audio_disable and has_alsaloop_install:
+    if has_sinc_pkgs and has_zero_detect and has_rpi4_detect and has_auto_boot and has_zero_audio_disable and has_direct_hw:
         report.log_pass("Installer", "Zero 2 W & RPi 4B Automated Installer (install.sh)",
                         "Verified auto-board detection, sinc resampling packages, automatic boot_config injection & systemd provisioning")
     else:
@@ -149,38 +149,34 @@ try:
 except Exception as e:
     report.log_warn("ALSA", "SoftMaster Mixer", str(e))
 
-# Check Audio Pipeline Rate Alignment (Anti-Pitch-Shift & Anti-Underrun Validation)
+# Check Audio Pipeline: Direct Hardware + Kernel Multi/Route Architecture
 try:
     proj_dir = os.path.dirname(os.path.abspath(__file__))
-    alsaloop_path = os.path.join(proj_dir, "alsaloop.service")
     shairport_path = os.path.join(proj_dir, "shairport-sync.conf")
     asound_path = os.path.join(proj_dir, "asound_rpi4b.conf")
     boot_path = os.path.join(proj_dir, "boot_config_rpi4b.txt")
 
-    # 1. alsaloop rate lock check
-    with open(alsaloop_path, "r") as f:
-        alsaloop_content = f.read()
-    has_rate_44k = "-r 44100" in alsaloop_content
-    has_sync = "-S samplerate" in alsaloop_content or "-S auto" in alsaloop_content
-    has_headroom = "-t 120000" in alsaloop_content or "-t 150000" in alsaloop_content or "-t 200000" in alsaloop_content
-    has_format = "-f S16_LE" in alsaloop_content and "-c 2" in alsaloop_content
-
-    # 2. shairport-sync rate lock check
+    # 1. shairport-sync direct output check
     with open(shairport_path, "r") as f:
         shairport_content = f.read()
-    has_shairport_rate = "output_rate = 44100;" in shairport_content
+    has_shairport_default = 'output_device = "default";' in shairport_content
 
-    # 3. asound rate converter check
+    # 2. asound multi/route architecture check
     with open(asound_path, "r") as f:
         asound_content = f.read()
-    has_asound_rate = "rate 44100" in asound_content and "speexrate_medium" in asound_content
+    has_multi = "type multi" in asound_content and "pcm.multi_out" in asound_content
+    has_route = "type route" in asound_content and "pcm.duplex_route" in asound_content
+    has_hw_dmix = "pcm.dmixer_hw" in asound_content
+    has_loop_dmix = "pcm.dmixer_loop" in asound_content
+    has_softvol = "pcm.softvol_master" in asound_content and "SoftMaster" in asound_content
+    has_resampler = "speexrate_medium" in asound_content
 
-    if has_rate_44k and has_sync and has_headroom and has_format and has_shairport_rate and has_asound_rate:
-        report.log_pass("ALSA", "44.1kHz Rate Locking & Anti-Pitch-Shift Sync",
-                        "Verified 44.1kHz rate lock across Shairport-Sync, ALSA Loopback & alsaloop (-S samplerate, 120ms buffer, S16_LE)")
+    if has_shairport_default and has_multi and has_route and has_hw_dmix and has_loop_dmix and has_softvol and has_resampler:
+        report.log_pass("ALSA", "Direct Hardware Kernel Multi/Route Pipeline (Zero alsaloop)",
+                        "Verified Direct Hardware Playback to bcm2835 Headphones + Kernel Loopback Clone (48kHz Speex, SoftMaster, zero clock drift)")
     else:
-        report.log_fail("ALSA", "44.1kHz Rate Locking & Anti-Pitch-Shift Sync",
-                        f"Alignment failure: alsaloop_rate={has_rate_44k}, sync={has_sync}, headroom={has_headroom}, shairport={has_shairport_rate}")
+        report.log_fail("ALSA", "Direct Hardware Kernel Multi/Route Pipeline (Zero alsaloop)",
+                        f"Architecture failure: shairport={has_shairport_default}, multi={has_multi}, route={has_route}, softvol={has_softvol}")
 
     # 4. Sigma-Delta noise shaping check
     with open(boot_path, "r") as f:

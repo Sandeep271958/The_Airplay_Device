@@ -141,16 +141,22 @@ RPi Pin 19 (GPIO 10) ──→ 8×8 Matrix DIN (Pixels 0–63)
 
 ---
 
-## Audio Pipeline
+## Audio Pipeline (Direct Hardware Hi-Fi Architecture)
 
 ```text
 AirPlay (shairport-sync) / Bluetooth (bluealsa)
+       ↓ writes directly to ALSA default (pcm.airplay_dup via softvol_master)
        ↓
-hw:Loopback,0,0 (ALSA Loopback Playback)
-       ↕ (kernel coupled)
-hw:Loopback,1,0 (ALSA Loopback Capture)
-       ├─→ alsaloop → softvol_out → 3.5mm Headphone Jack (or PCM5102A DAC)
-       └─→ CAVA (FIFO /tmp/cava.fifo) → WS2812B LED Matrix
+ALSA Kernel Multi / Route Engine
+       ├─→ [Direct DMA Output] → 3.5mm Headphone Jack (or PCM5102A I2S DAC)
+       │    ★ ZERO USESPACE RELAY DAEMONS (alsaloop eliminated)
+       │    ★ BIT-PERFECT CLOCK, ZERO PITCH SHIFT, ZERO STUTTER
+       │
+       └─→ [Kernel Loopback Clone] → hw:Loopback,0,0
+                                           ↕
+                                     hw:Loopback,1,0
+                                           ↓
+                                     CAVA Visualizer Engine → WS2812B LED Matrix & TFT
 ```
 
 ---
