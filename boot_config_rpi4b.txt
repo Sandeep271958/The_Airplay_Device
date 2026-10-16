@@ -8,6 +8,10 @@
 # KEEP onboard audio ENABLED (for 3.5mm headphone jack output)
 dtparam=audio=on
 
+# Enable 2nd-order Sigma-Delta Modulation & noise-shaping on 3.5mm analog audio jack
+# Eliminates background hiss, static hash, and PWM distortion for Hi-Fi clarity!
+audio_pwm_mode=2
+
 # Do NOT load hifiberry-dac overlay (no I2S DAC connected yet)
 # Uncomment the line below once you connect the PCM5102A:
 # dtoverlay=hifiberry-dac

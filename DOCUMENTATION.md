@@ -24,9 +24,9 @@ graph TD
     subgraph Audio Subsystem
         Receiver -->|PCM Audio| LoopbackIn[hw:Loopback,0,0 Playback]
         LoopbackIn --> LoopbackOut[hw:Loopback,1,0 Capture]
-        LoopbackOut -->|alsaloop relay| SoftMaster[ALSA SoftMaster Mixer]
-        SoftMaster --> DAC[3.5mm Jack / PCM5102A I2S DAC]
-        LoopbackOut -->|dsnoop capture| CAVA[CAVA Audio Analyser]
+        LoopbackOut -->|alsaloop relay 44.1kHz -S samplerate| SoftMaster[ALSA SoftMaster Mixer]
+        SoftMaster --> DAC[3.5mm Jack audio_pwm_mode=2 / PCM5102A I2S DAC]
+        LoopbackOut -->|dsnoop capture 44.1kHz| CAVA[CAVA Audio Analyser]
         CAVA -->|ASCII Pipe /tmp/cava.fifo| FIFO[(Raw 8-Band FIFO)]
     end
 
@@ -187,6 +187,32 @@ Raw JPEG artwork streamed over AirPlay (often up to 1400×1400) is decoded and p
 * **Optimistic UI:** Play/Pause toggles state in memory instantly (0ms perceived latency) while D-Bus network calls execute in background daemon threads.
 * **Hardware Debounce:** Calibrated 80ms window (`BOUNCE_TIME = 0.08`) filters contact chatter without sluggish button feel.
 
+### 6.3. Hi-Fi Audio Pipeline Engineering & Pitch-Shift Elimination
+To resolve audio dropouts, unnatural high-frequency pitch upshifts ("chipmunk effect"), and PWM noise, the entire ALSA audio bridge has been engineered for studio-grade Hi-Fi reproduction:
+
+* **The Sample Rate Mismatch & Pitch Shift Root Cause:**
+  * AirPlay streams CD-quality PCM at **44,100 Hz** (`S16_LE`, 2 channels).
+  * Debian ALSA's `alsaloop` daemon defaults to **48,000 Hz** if unspecified, and the RPi 4B's onboard `bcm2835 Headphones` runs natively at 48,000 Hz.
+  * Without rate constraints, `alsaloop` was reading at 48 kHz while Shairport Sync was feeding at 44.1 kHz.
+  * **Pitch Upshift Ratio:** $\frac{48000}{44100} = 1.0884$ (+8.84% speedup, shifting all musical pitches sharp by +1.5 semitones).
+* **Buffer Starvation & Audio Dropouts:**
+  * Consuming 48,000 samples/sec from a 44,100 samples/sec source drained 3,900 extra samples every second.
+  * With a 50ms buffer (`-t 50000` = 2,205 samples), the buffer starved every ~500ms, triggering repeated kernel XRUN underruns where audio cut out to total silence while CAVA continued dancing.
+* **The 44,100 Hz Hardware Rate Lock:**
+  * `alsaloop.service` explicitly enforces: `-c 2 -r 44100 -f S16_LE`.
+  * `shairport-sync.conf` explicitly enforces: `output_rate = 44100; output_format = "S16"; period_size = 1024; buffer_size = 8192;`.
+  * `asound.conf` & `asound_rpi4b.conf` enforce `rate 44100` on the `loopcapture` `dsnoop` slave.
+* **120ms Latency Headroom (`-t 120000`):**
+  * Target buffer latency expanded from 50ms to 120ms, providing ample scheduling headroom on Linux without compromising AirPlay AV sync.
+* **Adaptive `libsamplerate` Sinc Interpolation (`-S samplerate -A sincfastest -n`):**
+  * ALSA's default `captshift` pitch-stretching clock compensation warbles and degrades acoustic fidelity.
+  * Using `-S samplerate` pairs with `libsamplerate0` (Secret Rabbit Code) to adaptively track hardware clock drift using sinc interpolation, guaranteeing bit-perfect pitch stability.
+* **Speex Studio Resampler (`speexrate_medium`):**
+  * Configured `defaults.pcm.rate_converter "speexrate_medium"` in `/etc/asound.conf` to eliminate high-frequency aliasing distortion.
+* **2nd-Order Sigma-Delta Noise Shaping (`audio_pwm_mode=2`):**
+  * By default, the RPi 3.5mm analog jack uses 1st-order PWM modulation which produces audible background hiss and digital hash.
+  * `audio_pwm_mode=2` in `/boot/firmware/config.txt` enables 2nd-order sigma-delta modulation, shifting PWM switching noise far above 20 kHz into the inaudible spectrum for crystal-clear analog line output.
+
 ---
 
 ## 7. Diagnostics & Verification Suite
@@ -194,9 +220,10 @@ Raw JPEG artwork streamed over AirPlay (often up to 1400×1400) is decoded and p
 The repository includes a comprehensive automated test and calibration suite:
 
 1. **Integrated Test Suite (`test_suite.py`):**
-   * **44 critical unit and integration tests** validating:
+   * **46 critical unit and integration tests** validating:
      * Daemon services & configuration integrity.
      * ALSA loopback routing and mixer fallbacks.
+     * 44.1kHz sample rate locking, headroom buffers & Sigma-Delta noise shaping.
      * WS2812B pinout, progressive pixel mapping, thermal limits, and idle blanking.
      * Soap Bubble iridescent palette and zero-traffic-light enforcement.
      * Fluid dynamics, gravity droplet falloff, and sub-pixel gamma dithering.

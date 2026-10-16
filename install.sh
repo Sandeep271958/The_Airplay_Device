@@ -37,6 +37,8 @@ sudo apt install -y \
     bluez \
     bluez-alsa-utils \
     alsa-utils \
+    libsamplerate0 \
+    libasound2-plugins \
     playerctl
 
 # --- 3. CAVA (audio visualiser engine) ---

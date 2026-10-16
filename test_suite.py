@@ -126,6 +126,53 @@ try:
 except Exception as e:
     report.log_warn("ALSA", "SoftMaster Mixer", str(e))
 
+# Check Audio Pipeline Rate Alignment (Anti-Pitch-Shift & Anti-Underrun Validation)
+try:
+    proj_dir = os.path.dirname(os.path.abspath(__file__))
+    alsaloop_path = os.path.join(proj_dir, "alsaloop.service")
+    shairport_path = os.path.join(proj_dir, "shairport-sync.conf")
+    asound_path = os.path.join(proj_dir, "asound_rpi4b.conf")
+    boot_path = os.path.join(proj_dir, "boot_config_rpi4b.txt")
+
+    # 1. alsaloop rate lock check
+    with open(alsaloop_path, "r") as f:
+        alsaloop_content = f.read()
+    has_rate_44k = "-r 44100" in alsaloop_content
+    has_sync = "-S samplerate" in alsaloop_content or "-S auto" in alsaloop_content
+    has_headroom = "-t 120000" in alsaloop_content or "-t 150000" in alsaloop_content or "-t 200000" in alsaloop_content
+    has_format = "-f S16_LE" in alsaloop_content and "-c 2" in alsaloop_content
+
+    # 2. shairport-sync rate lock check
+    with open(shairport_path, "r") as f:
+        shairport_content = f.read()
+    has_shairport_rate = "output_rate = 44100;" in shairport_content
+
+    # 3. asound rate converter check
+    with open(asound_path, "r") as f:
+        asound_content = f.read()
+    has_asound_rate = "rate 44100" in asound_content and "speexrate_medium" in asound_content
+
+    if has_rate_44k and has_sync and has_headroom and has_format and has_shairport_rate and has_asound_rate:
+        report.log_pass("ALSA", "44.1kHz Rate Locking & Anti-Pitch-Shift Sync",
+                        "Verified 44.1kHz rate lock across Shairport-Sync, ALSA Loopback & alsaloop (-S samplerate, 120ms buffer, S16_LE)")
+    else:
+        report.log_fail("ALSA", "44.1kHz Rate Locking & Anti-Pitch-Shift Sync",
+                        f"Alignment failure: alsaloop_rate={has_rate_44k}, sync={has_sync}, headroom={has_headroom}, shairport={has_shairport_rate}")
+
+    # 4. Sigma-Delta noise shaping check
+    with open(boot_path, "r") as f:
+        boot_content = f.read()
+    if "audio_pwm_mode=2" in boot_content:
+        report.log_pass("ALSA", "Analog 3.5mm Sigma-Delta DAC Modulation",
+                        "audio_pwm_mode=2 enabled in boot config (pushes PWM switching noise > 20kHz)")
+    else:
+        report.log_fail("ALSA", "Analog 3.5mm Sigma-Delta DAC Modulation",
+                        "audio_pwm_mode=2 missing in boot_config_rpi4b.txt")
+
+except Exception as e:
+    report.log_fail("ALSA", "Audio Pipeline Inspection Error", str(e))
+
+
 
 # =====================================================================
 # TEST 3: CAVA SPECTRUM FIFO & WS2812B LED MATRIX TOPOLOGY

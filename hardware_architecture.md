@@ -225,15 +225,30 @@ The StandBy clock screen displays the currently connected Wi-Fi network:
 
 ---
 
-## 6. Audio Routing Pipeline
+## 6. Audio Routing Pipeline & Hi-Fi Calibration
 
 ```
 AirPlay (shairport-sync) / Bluetooth (bluealsa)
-       ↓ writes S16_LE 44100Hz stereo
+       ↓ writes S16_LE 44100Hz stereo (buffer_size 8192, period_size 1024)
 hw:Loopback,0,0 (ALSA Loopback Playback)
        ↕ coupled internally by kernel
 hw:Loopback,1,0 (ALSA Loopback Capture)
-       ↓ shared via dsnoop (pcm.loopcapture)
-       ├── CAVA (FIFO /tmp/cava.fifo) → WS2812B 8×8 Matrix
-       └── alsaloop → pcm.softvol_out → 3.5mm Jack (bcm2835 Headphones)
+       ↓ shared via dsnoop (pcm.loopcapture @ 44100Hz)
+       ├── CAVA (FIFO /tmp/cava.fifo) → WS2812B 8×8 Matrix Visualizer Engine
+       └── alsaloop (-c 2 -r 44100 -f S16_LE -t 120000 -S samplerate -A sincfastest -n)
+             ↓
+           pcm.softvol_out (defaults.pcm.rate_converter "speexrate_medium")
+             ↓
+           3.5mm Headphone Jack (audio_pwm_mode=2 Sigma-Delta Modulation)
+           [Or PCM5102A I2S DAC via hifiberry-dac on Raspberry Pi Zero 2 W]
 ```
+
+### 6.1. Pitch Shift & Buffer Starvation Resolution
+* **The Root Cause:** Shairport Sync feeds CD-quality PCM at **44,100 Hz**. ALSA's `alsaloop` daemon defaults to **48,000 Hz** when unconstrained. This created a speedup of $48000 / 44100 = 1.0884$ (+8.84% faster, shifting music up by ~1.5 semitones), while draining the 50ms buffer every ~500ms and creating constant audio dropouts and XRUN underruns.
+* **The Fix:**
+  1. `alsaloop.service` is locked to `-c 2 -r 44100 -f S16_LE`.
+  2. Latency buffer expanded to `-t 120000` (120ms headroom) to eliminate scheduling dropouts.
+  3. Replaced ALSA's pitch-warbling `captshift` with `-S samplerate -A sincfastest -n` for adaptive sinc interpolation.
+  4. Enabled `audio_pwm_mode=2` in `/boot/firmware/config.txt` to activate 2nd-order sigma-delta noise shaping on the RPi 4B 3.5mm analog output.
+  5. Configured `defaults.pcm.rate_converter "speexrate_medium"` in ALSA configuration.
+
