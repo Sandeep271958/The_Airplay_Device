@@ -101,13 +101,30 @@ Both the Raspberry Pi 4B and Raspberry Pi Zero 2W share the 40-pin GPIO header.
 | **SET** | Cycle Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** | Info → Art → Visualizer |
 | **RST** | Toggle AirPlay/BT | **GPIO 4** | **Pin 7** | **🟠 Orange** | Long-press (1.0s) |
 
-### 3. WS2812B LEDs (Matrix & Status)
+### 3. WS2812B LEDs (8×8 Matrix & Status Daisy-Chain)
 
-| LED Pin | Connection | RPi GPIO | Physical Pin # | Notes |
-| :--- | :--- | :--- | :---: | :--- |
-| **5V / VCC** | External 5V PSU | — | — | **Do NOT power from Pi 5V pin!** |
-| **GND** | Common Ground | GND | **Pin 39** | Common ground with Pi |
-| **DIN** | SPI0 MOSI | **GPIO 10** | **Pin 19** | Avoids PWM/I2S DMA conflict |
+The 8×8 Matrix and the dedicated single Status LED are daisy-chained on SPI0 MOSI (GPIO 10 / Physical Pin 19):
+
+```text
+RPi Pin 19 (GPIO 10) ──→ 8×8 Matrix DIN (Pixels 0–63)
+                                │
+                          8×8 Matrix DOUT
+                                │
+                                └──→ Single Status LED DIN (Pixel 64)
+```
+
+| Component | Pin | Connection | RPi Pin / Source | Notes |
+| :--- | :---: | :--- | :---: | :--- |
+| **8×8 Matrix** | **5V / VCC** | External 5V PSU | External PSU | **Do NOT power from Pi 5V pin!** |
+| | **GND** | Common Ground | **Pin 39** + PSU GND | Common ground with Pi |
+| | **DIN** | SPI0 MOSI | **Pin 19** (GPIO 10) | Pixels 0–63 (Avoids PWM/I2S DMA conflict) |
+| | **DOUT** | Daisy-chain Out | Status LED DIN | Feeds signal to Pixel 64 |
+| **Status LED** | **5V / VCC** | 5V Supply | 5V Rail / PSU | Power supply |
+| | **GND** | Common Ground | Common GND | Shared ground |
+| | **DIN** | Data In | Matrix **DOUT** | Maps to **Pixel 64** |
+
+* **50% Brightness Calibration (`LED_BRIGHTNESS = 40`):** Limits current draw and eliminates PCB thermal overheating.
+* **Thermal Idle Blanking (`clear_matrix_bars()`):** Turns all 64 matrix pixels OFF when playback is paused or stopped, consuming zero watts while idle.
 
 ---
 

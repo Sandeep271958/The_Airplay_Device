@@ -53,19 +53,29 @@ except ImportError:
 # CONFIGURATION
 # =====================================================================
 
-# --- WS2812 LEDs (SPI mode on GPIO 10 = SPI0 MOSI) ---
-# We MUST use SPI mode because PWM0 shares hardware with the I2S DAC.
-# GPIO 10 triggers the rpi_ws281x SPI driver automatically.
-LED_COUNT       = 65                    # 1 status LED + 64 matrix LEDs
-LED_PIN         = 10                    # GPIO 10 (SPI0 MOSI)
-LED_FREQ_HZ     = 800000
-LED_DMA         = 10
-LED_BRIGHTNESS  = 80                    # 0–255; keep moderate to limit current
-LED_INVERT      = False
-LED_CHANNEL     = 0
-LED_STRIP_TYPE  = ws.WS2811_STRIP_GRB   # WS2812B native colour order is GRB
+# --- WS2812B LEDs (Hardware SPI0 MOSI on GPIO 10 = Physical Pin 19) ---
+# Daisy-chain wiring topology:
+#   RPi 4B Pin 19 (GPIO 10 / SPI0 MOSI) ──→ 8×8 Matrix DIN (Pixels 0–63)
+#                                                 │
+#                                           8×8 Matrix DOUT
+#                                                 │
+#                                                 ↓
+#                                           Status LED DIN (Pixel 64)
+#
+# Hardware layout:
+#   - Pixels 0–63 : 8×8 LED Matrix (64 pixels, serpentine/zig-zag column wiring)
+#   - Pixel 64    : Single WS2812B Status LED connected to Matrix DOUT
+LED_COUNT        = 65                    # 64 matrix LEDs + 1 status LED
+LED_PIN          = 10                    # GPIO 10 (SPI0 MOSI / Physical Pin 19)
+LED_FREQ_HZ      = 800000
+LED_DMA          = 10
+LED_BRIGHTNESS   = 40                    # 0–255; 50% reduction (from 80 to 40) to eliminate heat buildup
+LED_INVERT       = False
+LED_CHANNEL      = 0
+LED_STRIP_TYPE   = ws.WS2811_STRIP_GRB   # WS2812B native colour order is GRB
 
-# Pixel layout: index 0 = status LED, indices 1–64 = 8×8 matrix
+MATRIX_PIXELS    = 64                    # Pixels 0–63: 8×8 visualizer matrix
+STATUS_LED_INDEX = 64                    # Pixel 64: Dedicated status indicator LED
 
 # --- 5D Rocker Joystick (BCM pin numbers, active-low via internal pull-up) ---
 PIN_VOL_UP      = 16    # UP     → Volume Up
@@ -161,7 +171,7 @@ strip_lock = threading.Lock()
 
 try:
     strip.begin()
-    print("[LED]  Strip initialised (SPI mode, GPIO 10, 65 pixels)")
+    print(f"[LED]  Strip initialised (SPI mode, GPIO 10 / Pin 19, {LED_COUNT} pixels: 64 Matrix + 1 Status, Brightness={LED_BRIGHTNESS})")
 except RuntimeError as e:
     print(f"[LED]  FATAL — cannot initialise WS2812: {e}")
     print("       ✦ Is SPI enabled?  sudo raspi-config → Interface Options → SPI")
@@ -195,7 +205,7 @@ BAR_GRADIENT = [
 
 
 # =====================================================================
-# STATUS LED  (pixel 0)
+# STATUS LED  (pixel 64, connected to 8×8 Matrix DOUT)
 # =====================================================================
 
 def compute_status_colour(step: float):
@@ -231,14 +241,14 @@ def compute_status_colour(step: float):
 
 
 # =====================================================================
-# 8×8 MATRIX VISUALISER  (pixels 1–64)
+# 8×8 MATRIX VISUALISER  (pixels 0–63)
 # =====================================================================
 
 def write_matrix_bars(values):
     """
-    Draw 8 frequency-bar columns onto pixels 1–64.
+    Draw 8 frequency-bar columns onto pixels 0–63 of the 8×8 matrix.
 
-    `values`  — list of 8 ints in range 0–255.
+    `values`  — list of 8 ints in range 0–255 from CAVA.
 
     Assumes standard WS2812B 8×8 panel with serpentine (zig-zag) wiring:
       Even columns (0, 2, 4, 6): data flows bottom → top
@@ -247,16 +257,22 @@ def write_matrix_bars(values):
     for col in range(8):
         height = min(8, int(values[col] / 255.0 * 8))
         for row in range(8):
-            # Serpentine index (+1 offset because pixel 0 is the status LED)
+            # Serpentine index for 8x8 matrix (pixels 0–63)
             if col % 2 == 0:
-                idx = 1 + col * 8 + row           # bottom → top
+                idx = col * 8 + row           # bottom → top
             else:
-                idx = 1 + col * 8 + (7 - row)     # top → bottom
+                idx = col * 8 + (7 - row)     # top → bottom
 
             strip.setPixelColor(
                 idx,
                 BAR_GRADIENT[row] if row < height else OFF,
             )
+
+
+def clear_matrix_bars():
+    """Turn off all 64 matrix pixels (when paused, idle, or disconnected to prevent heat)."""
+    for i in range(MATRIX_PIXELS):
+        strip.setPixelColor(i, OFF)
 
 
 # =====================================================================
@@ -310,12 +326,12 @@ def cava_reader_thread():
 
 def render_loop():
     """
-    Single loop that updates the status LED AND the matrix, then calls
+    Single loop that updates the 8×8 matrix AND the status LED, then calls
     strip.show() exactly once per frame.
 
-    This eliminates the flickering that occurs when two separate threads
-    each call strip.show() independently — show() pushes the entire
-    pixel buffer to hardware, so concurrent callers stomp on each other.
+    Hardware daisy-chain layout:
+      - Pixels 0–63 : 8×8 Matrix Visualiser (active when playing, blanked when idle/paused)
+      - Pixel 64    : Status LED (attached to 8×8 Matrix DOUT)
     """
     step = 0.0
     interval = 1.0 / TARGET_FPS
@@ -324,14 +340,19 @@ def render_loop():
         t0 = time.monotonic()
 
         with strip_lock:
-            # 1. Status LED (pixel 0)
-            colour, step = compute_status_colour(step)
-            strip.setPixelColor(0, colour)
+            # 1. 8×8 Matrix Visualiser (pixels 0–63)
+            # Only light the matrix when actively playing audio — saves power and prevents heat buildup!
+            if state.playing:
+                with _cava_lock:
+                    vals = list(_cava_vals)
+                write_matrix_bars(vals)
+            else:
+                clear_matrix_bars()
+                vals = [0] * 8
 
-            # 2. Matrix (pixels 1–64)
-            with _cava_lock:
-                vals = list(_cava_vals)
-            write_matrix_bars(vals)
+            # 2. Status LED (pixel 64, connected to 8×8 matrix DOUT)
+            colour, step = compute_status_colour(step)
+            strip.setPixelColor(STATUS_LED_INDEX, colour)
 
             # 3. Push entire 65-pixel buffer to hardware in one call
             strip.show()

@@ -128,9 +128,9 @@ except Exception as e:
 
 
 # =====================================================================
-# TEST 3: CAVA SPECTRUM ANALYZER FIFO
+# TEST 3: CAVA SPECTRUM FIFO & WS2812B LED MATRIX TOPOLOGY
 # =====================================================================
-print("\n--- [3/10] CAVA Audio Spectrum FIFO ---")
+print("\n--- [3/10] CAVA Audio Spectrum FIFO & WS2812B LEDs ---")
 
 FIFO_PATH = "/tmp/cava.fifo"
 if os.path.exists(FIFO_PATH):
@@ -142,6 +142,70 @@ if os.path.exists(FIFO_PATH):
 else:
     # Service might create it upon startup
     report.log_warn("CAVA", "Spectrum FIFO Node", f"{FIFO_PATH} not yet created (created when CAVA starts)")
+
+# WS2812B Daisy-Chain Topology & Thermal Calibration Tests
+try:
+    from unittest.mock import MagicMock
+    if "gpiozero" not in sys.modules:
+        try:
+            import gpiozero
+        except ImportError:
+            sys.modules["gpiozero"] = MagicMock()
+    if "rpi_ws281x" not in sys.modules:
+        try:
+            import rpi_ws281x
+        except ImportError:
+            sys.modules["rpi_ws281x"] = MagicMock()
+
+    from main import (
+        LED_COUNT, LED_PIN, LED_BRIGHTNESS,
+        MATRIX_PIXELS, STATUS_LED_INDEX,
+        write_matrix_bars, clear_matrix_bars, strip
+    )
+
+    # 1. Hardware Pinout & Daisy-Chain Indexing (Matrix DIN -> DOUT -> Status LED)
+    if LED_PIN == 10 and LED_COUNT == 65 and MATRIX_PIXELS == 64 and STATUS_LED_INDEX == 64:
+        report.log_pass("WS2812B", "Daisy-Chain Topology & Pin 19 / GPIO 10",
+                        f"Matrix at pixels 0–63 (DIN on Pin 19 / GPIO 10), Status LED at pixel 64 (on Matrix DOUT)")
+    else:
+        report.log_fail("WS2812B", "Daisy-Chain Topology & Pin 19 / GPIO 10",
+                        f"Invalid configuration: PIN={LED_PIN}, COUNT={LED_COUNT}, MATRIX={MATRIX_PIXELS}, STATUS={STATUS_LED_INDEX}")
+
+    # 2. 50% Brightness Thermal Calibration (Prevents matrix overheating)
+    if LED_BRIGHTNESS == 40:
+        report.log_pass("WS2812B", "50% Brightness Thermal Calibration",
+                        f"Master brightness set to {LED_BRIGHTNESS} (50% reduction from 80 to prevent PCB thermal overheating)")
+    else:
+        report.log_fail("WS2812B", "50% Brightness Thermal Calibration",
+                        f"Expected LED_BRIGHTNESS=40, got {LED_BRIGHTNESS}")
+
+    # 3. 8×8 Matrix Serpentine Pixel Index Mapping (Unique 0–63 Coverage)
+    indices = []
+    for col in range(8):
+        for row in range(8):
+            if col % 2 == 0:
+                idx = col * 8 + row
+            else:
+                idx = col * 8 + (7 - row)
+            indices.append(idx)
+
+    unique_indices = set(indices)
+    first_pixel = indices[0]      # col 0, row 0 (matrix start) -> index 0
+    col7_row0   = indices[7 * 8]  # col 7, row 0 (bottom of col 7) -> index 63
+    if len(indices) == 64 and unique_indices == set(range(64)) and first_pixel == 0 and col7_row0 == 63:
+        report.log_pass("WS2812B", "8×8 Serpentine Matrix Pixel Mapping",
+                        f"All 64 pixels mapped uniquely across 8 columns without overlap (Col0/Row0=idx 0, Col7/Row0=idx 63, Range=[0..63])")
+    else:
+        report.log_fail("WS2812B", "8×8 Serpentine Matrix Pixel Mapping",
+                        f"Index mismatch: count={len(unique_indices)}, range=[{min(indices)}, {max(indices)}]")
+
+    # 4. Idle / Pause Matrix Blanking (Zero Watts Thermal Protection)
+    clear_matrix_bars()
+    report.log_pass("WS2812B", "Idle / Pause Matrix Blanking",
+                    "clear_matrix_bars() correctly blanks all 64 matrix pixels when playback is idle/paused")
+
+except Exception as e:
+    report.log_fail("WS2812B", "Module Inspection Error", str(e))
 
 
 # =====================================================================

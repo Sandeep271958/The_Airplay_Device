@@ -65,13 +65,40 @@ All inputs configure active-low with internal pull-ups (`pull_up=True`):
 | **SET** | Cycle Display Modes | **GPIO 27** | **Pin 13** | **🟡 Yellow** | Info ↔ Art ↔ Visualizer |
 | **RST** | Toggle Mode | **GPIO 4** | **Pin 7** | **🟠 Orange** | AirPlay ↔ Bluetooth (1.0s hold) |
 
-### 3.3. WS2812B LEDs (8×8 Matrix & Status Indicator)
+### 3.3. WS2812B LEDs (8×8 Matrix & Status Indicator Daisy-Chain)
 
-| LED Pin | Connection | RPi GPIO | Physical Pin # | Hardware Note |
-| :---: | :--- | :---: | :---: | :--- |
-| **5V / VCC** | External 5V PSU | — | — | **Do NOT draw from Pi 5V pin!** |
-| **GND** | PSU GND + Pi GND | GND | **Pin 39** | Common ground required |
-| **DIN** | SPI0 MOSI | **GPIO 10** | **Pin 19** | Avoids PWM/I2S DMA conflict |
+The 8×8 Matrix and the dedicated single Status LED are daisy-chained on a single high-speed SPI data line (SPI0 MOSI on GPIO 10 / Physical Pin 19):
+
+```text
+Raspberry Pi 4B Pin 19 (GPIO 10 / SPI0 MOSI)
+       │
+       ▼
+┌───────────────────────────────┐
+│     8×8 Matrix LED Plate      │  Pixels 0–63 (64 LEDs)
+│  (DIN on Pin 19 / GPIO 10)    │  Serpentine zig-zag column mapping
+│             DOUT              │
+└──────────────┬────────────────┘
+               │
+               ▼
+┌───────────────────────────────┐
+│   Single WS2812B Status LED   │  Pixel 64 (1 LED)
+│  (DIN attached to Matrix DOUT)│  AirPlay / Bluetooth status indicator
+└───────────────────────────────┘
+```
+
+| Component | Pin | Connection | RPi Pin / Source | Hardware Notes |
+| :--- | :---: | :--- | :---: | :--- |
+| **8×8 Matrix Plate** | **5V / VCC** | External 5V PSU | External PSU | **Do NOT power from Pi 5V pin!** |
+| | **GND** | Common Ground | **Pin 39** + PSU GND | Common ground required |
+| | **DIN** | SPI0 MOSI | **Pin 19** (GPIO 10) | Pixels 0–63 (Avoids PWM/I2S DMA conflict) |
+| | **DOUT** | Daisy-chain Out | Status LED DIN | Carries data to Pixel 64 |
+| **Single Status LED** | **5V / VCC** | 5V Supply | 5V Rail / PSU | Power supply |
+| | **GND** | Common Ground | Common GND | Shared ground |
+| | **DIN** | Signal In | Matrix **DOUT** | Maps to **Pixel 64** |
+
+#### Thermal Protection & Power Optimization
+* **50% Brightness Calibration (`LED_BRIGHTNESS = 40`):** WS2812B matrices generate intense heat when all 64 LEDs glow at high brightness on a small PCB. Master brightness is set to 40 (50% reduction from 80), providing vibrant, rich colors while running cool and safe.
+* **Idle / Pause Matrix Blanking (`clear_matrix_bars()`):** When playback is paused, stopped, or disconnected, all 64 matrix pixels are powered off immediately. Only the dedicated Status LED (Pixel 64) gently pulses or glows, eliminating thermal buildup and conserving power.
 
 ---
 
