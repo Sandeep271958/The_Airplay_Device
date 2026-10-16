@@ -45,8 +45,19 @@ if spidev is None or OutputDevice is None:
 
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
-SPI_PORT    = 4     # Hardware SPI4 (/dev/spidev4.0)
-SPI_DEVICE  = 0     # CS0 (GPIO 25 via dtoverlay=spi4-1cs,cs0_pin=25)
+# Auto-detect SPI port: SPI4 (RPi 4B) or SPI1 (RPi Zero 2 W)
+SPI_PORT    = 4     # Hardware SPI4 (/dev/spidev4.0) on RPi 4B
+SPI_DEVICE  = 0     # CS0 (GPIO 25)
+if not os.path.exists(f"/dev/spidev{SPI_PORT}.{SPI_DEVICE}"):
+    for p in [4, 1, 0]:
+        if os.path.exists(f"/dev/spidev{p}.{SPI_DEVICE}"):
+            SPI_PORT = p
+            break
+        elif os.path.exists(f"/dev/spidev{p}.0"):
+            SPI_PORT = p
+            SPI_DEVICE = 0
+            break
+
 PIN_DC      = 24    # Pin 18 (Green)
 PIN_RST     = 12    # Pin 32 (Yellow)
 PIN_BL      = 20    # Pin 38 (Grey)

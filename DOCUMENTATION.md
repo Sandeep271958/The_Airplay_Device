@@ -257,7 +257,7 @@ The automated installer provisions a clean Raspberry Pi OS Lite 64-bit installat
 * **Board Auto-Detection:** Introspects `/proc/device-tree/model` to distinguish between Raspberry Pi 4B (prototype) and Raspberry Pi Zero 2 W (production).
 * **Audio Packages & Resamplers:** Installs `shairport-sync`, `alsa-utils`, `libsamplerate0`, `libasound2-plugins`, and `cava`.
 * **Configuration Mapping:** Dynamically places `asound_rpi4b.conf` or `asound.conf`, locking 44.1kHz rate and Speex conversion.
-* **Service Linking:** Configures paths in `shairport-sync.conf`, `alsaloop.service`, and `airplaydevice.service`, enabling them in systemd.
+* **Service Linking:** Configures paths in `shairport-sync.conf` and `airplaydevice.service`, enabling direct hardware playback while ensuring legacy `alsaloop.service` is permanently disabled.
 * **Boot Overlays Injection:** Automatically writes device-tree overlays and frequency locks to `/boot/firmware/config.txt` (or `/boot/config.txt`) with timestamped backups and idempotent section markers.
 
 ```bash

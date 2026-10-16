@@ -15,18 +15,22 @@ Software Stack:
   - shairport-sync   : AirPlay 2 receiver
   - bluealsa          : Bluetooth A2DP audio sink
   - CAVA              : real-time audio frequency analysis
-  - alsaloop           : relays ALSA loopback → DAC
   - rpi_ws281x        : WS2812 LED driver (SPI mode, avoids I2S conflict)
 
 Audio Pipeline:
   shairport-sync (or bluealsa-aplay)
-       ↓ writes to
-  hw:Loopback,0,0  (ALSA loopback playback)
-       ↕ kernel couples playback ↔ capture
-  hw:Loopback,1,0  (ALSA loopback capture)
-       ↓ shared via dsnoop
-       ├── CAVA         → frequency bars → LED matrix
-       └── alsaloop     → softvol → hw:DAC → speakers
+       ↓ writes stereo audio (44.1kHz S16_LE)
+  pcm.!default / pcm.airplay_dup
+       ↓ (resampled smoothly via speexrate_medium)
+  pcm.softvol_master  ("SoftMaster" volume slider)
+       ↓
+  pcm.duplex_route (splits stereo into 4 channels)
+       ├── Channels 0 & 1: pcm.dmixer_hw  → Direct Hardware DAC (Speakers/Jack)
+       └── Channels 2 & 3: pcm.dmixer_loop → hw:Loopback,0,0
+                                                   ↕
+                                             hw:Loopback,1,0
+                                                   ↓
+                                             CAVA Visualiser Engine
 """
 
 import time
@@ -485,14 +489,16 @@ def cava_reader_thread():
     Continuously read CAVA's raw ASCII FIFO and update _cava_vals.
 
     CAVA writes lines like "23;180;255;90;40;12;5;0\n" at ~30 fps.
-    If CAVA isn't running or the FIFO breaks, we retry after a short pause.
     """
-    if not os.path.exists(CAVA_FIFO):
-        try:
+    import stat
+    try:
+        if os.path.exists(CAVA_FIFO) and not stat.S_ISFIFO(os.stat(CAVA_FIFO).st_mode):
+            os.remove(CAVA_FIFO)
+        if not os.path.exists(CAVA_FIFO):
             os.mkfifo(CAVA_FIFO)
-        except OSError as e:
-            print(f"[CAVA] Cannot create FIFO {CAVA_FIFO}: {e}")
-            return
+    except OSError as e:
+        print(f"[CAVA] Cannot create FIFO {CAVA_FIFO}: {e}")
+        return
 
     print(f"[CAVA] Listening on {CAVA_FIFO}")
 
@@ -664,6 +670,12 @@ def state_monitor_thread():
 
     while True:
         try:
+            # Watchdog: ensure CAVA process stays running
+            global _cava_proc
+            if _cava_proc is not None and _cava_proc.poll() is not None:
+                print(f"[CAVA] Process exited (code {_cava_proc.returncode}) — reviving...")
+                start_cava()
+
             if state.mode == AppState.MODE_AIRPLAY:
                 # 1. Physical audio activity from CAVA
                 with _cava_lock:
@@ -795,18 +807,17 @@ def toggle_mode():
     """
     Hold RST for 1 second to switch audio modes.
 
-    Both modes feed audio into the same ALSA Loopback bus, so the
-    downstream pipeline (CAVA visualiser + alsaloop → DAC) stays
-    running unchanged.
+    Both modes feed audio into ALSA default, which routes directly
+    to the physical DAC while cloning to Loopback for CAVA analysis.
     """
     if state.mode == AppState.MODE_AIRPLAY:
         print("[MODE] Switching → BLUETOOTH")
         subprocess.run(["sudo", "systemctl", "stop", "shairport-sync"], check=False)
         subprocess.run(["sudo", "bluetoothctl", "discoverable", "on"], check=False)
         subprocess.run(["sudo", "bluetoothctl", "pairable", "on"], check=False)
-        # bluealsa-aplay feeds BT audio into the same Loopback bus
+        # bluealsa-aplay feeds BT audio into ALSA default (routes to DAC + CAVA loopback)
         subprocess.Popen(
-            ["bluealsa-aplay", "-D", "hw:Loopback,0,0", "00:00:00:00:00:00"],
+            ["bluealsa-aplay", "-D", "default", "00:00:00:00:00:00"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         state.mode      = AppState.MODE_BLUETOOTH
@@ -907,6 +918,35 @@ def on_vol_down():
         if state.mode == AppState.MODE_AIRPLAY:
             _send_shairport_command("VolumeDown")
     threading.Thread(target=_run, daemon=True).start()
+
+
+def init_audio_volume():
+    """
+    Ensure ALSA SoftMaster and physical hardware mixer controls are unmuted
+    and set to 100% at startup so audio is never silent or muted.
+    """
+    def _init():
+        # 1. Warm up ALSA default device so SoftMaster is instantiated if needed
+        try:
+            subprocess.run(
+                ["aplay", "-D", "default", "-d", "1", "/dev/zero"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+            )
+        except Exception:
+            pass
+
+        # 2. Unmute and set SoftMaster to 100%
+        subprocess.run(["amixer", "sset", "SoftMaster", "100%", "unmute"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for card in ("Headphones", "sndrpihifiberry", "0", "1"):
+            subprocess.run(["amixer", "-c", card, "sset", "SoftMaster", "100%", "unmute"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["amixer", "-c", card, "sset", "Headphone", "100%", "unmute"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["amixer", "-c", card, "sset", "PCM", "100%", "unmute"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    threading.Thread(target=_init, daemon=True, name="InitVolume").start()
 
 
 def on_next():
@@ -1066,8 +1106,9 @@ if __name__ == "__main__":
     btns["vis"].when_pressed      = on_vis_mode
     btns["mode"].when_held        = toggle_mode   # hold RST 1 s to toggle
 
-    # --- Start CAVA audio analyser ---
+    # --- Start CAVA audio analyser & initialise audio volume ---
     start_cava()
+    init_audio_volume()
 
     # --- Background threads ---
     threading.Thread(

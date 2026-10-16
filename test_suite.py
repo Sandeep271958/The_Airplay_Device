@@ -170,13 +170,23 @@ try:
     has_loop_dmix = "pcm.dmixer_loop" in asound_content
     has_softvol = "pcm.softvol_master" in asound_content and "SoftMaster" in asound_content
     has_resampler = "speexrate_medium" in asound_content
+    has_loop_plug = "pcm.loopcapture_snoop" in asound_content and "pcm.loopcapture" in asound_content
 
-    if has_shairport_default and has_multi and has_route and has_hw_dmix and has_loop_dmix and has_softvol and has_resampler:
+    # Check Bluetooth routing in main.py
+    main_path = os.path.join(proj_dir, "main.py")
+    with open(main_path, "r") as f:
+        main_content = f.read()
+    has_bt_default = '["bluealsa-aplay", "-D", "default"' in main_content
+    has_vol_init = "def init_audio_volume():" in main_content
+
+    if (has_shairport_default and has_multi and has_route and has_hw_dmix and
+        has_loop_dmix and has_softvol and has_resampler and has_loop_plug and
+        has_bt_default and has_vol_init):
         report.log_pass("ALSA", "Direct Hardware Kernel Multi/Route Pipeline (Zero alsaloop)",
-                        "Verified Direct Hardware Playback to bcm2835 Headphones + Kernel Loopback Clone (48kHz Speex, SoftMaster, zero clock drift)")
+                        "Verified Direct Hardware Playback to bcm2835 Headphones + Kernel Loopback Clone (48kHz Speex, SoftMaster, plug-wrapped loopcapture, Bluetooth to default)")
     else:
         report.log_fail("ALSA", "Direct Hardware Kernel Multi/Route Pipeline (Zero alsaloop)",
-                        f"Architecture failure: shairport={has_shairport_default}, multi={has_multi}, route={has_route}, softvol={has_softvol}")
+                        f"Architecture failure: shairport={has_shairport_default}, multi={has_multi}, route={has_route}, softvol={has_softvol}, loop_plug={has_loop_plug}, bt_default={has_bt_default}, vol_init={has_vol_init}")
 
     # 4. Sigma-Delta noise shaping check
     with open(boot_path, "r") as f:

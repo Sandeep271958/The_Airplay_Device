@@ -59,7 +59,9 @@ for path in cfg_paths:
         with open(path, "r") as f:
             content = f.read()
             if "core_freq=500" in content:
-                core_freq_locked = True
+                core_freq_locked = "500MHz (RPi 4B)"
+            elif "core_freq=400" in content:
+                core_freq_locked = "400MHz (RPi Zero 2 W)"
             if "dtparam=spi=on" in content or "dtoverlay=spi0-1cs" in content:
                 spi_enabled = True
         break
@@ -68,12 +70,12 @@ print("[DIAGNOSTIC 1/5] Boot Firmware Configuration:")
 if cfg_found:
     print(f"  ✓ Configuration file found: {cfg_found}")
     if core_freq_locked:
-        print("  ✓ GPU core_freq=500 is configured (SPI timing is locked & protected)")
+        print(f"  ✓ GPU core_freq is locked to {core_freq_locked} (SPI timing is locked & protected)")
     else:
-        print("  ✗ CRITICAL: 'core_freq=500' and 'core_freq_min=500' NOT detected in config.txt!")
-        print("    → On Raspberry Pi 4B, dynamic CPU/GPU clock scaling stretches SPI bits,")
+        print("  ✗ CRITICAL: 'core_freq=500' or 'core_freq=400' NOT detected in config.txt!")
+        print("    → Dynamic CPU/GPU clock scaling stretches SPI bits,")
         print("      causing WS2812B LEDs to decode every bit as 1 (blazing white & overheating).")
-        print("    → Fix: Add 'core_freq=500' and 'core_freq_min=500' to config.txt and reboot.")
+        print("    → Fix: Run sudo ./install.sh to automatically inject hardware overlays.")
 
     if spi_enabled:
         print("  ✓ SPI interface is enabled")

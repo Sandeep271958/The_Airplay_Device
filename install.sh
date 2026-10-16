@@ -103,6 +103,19 @@ fi
 sudo cp "$INSTALL_DIR/shairport-sync.conf" /etc/shairport-sync.conf
 echo "       → /etc/shairport-sync.conf (direct hardware output configured)"
 
+# Initialize and unmute ALSA mixer controls (SoftMaster & physical DAC)
+echo "       Initializing ALSA volume controls (SoftMaster & physical DAC)..."
+aplay -D default -d 1 /dev/zero >/dev/null 2>&1 || true
+amixer sset SoftMaster 100% unmute >/dev/null 2>&1 || true
+if [ "$IS_RPI4B" = true ]; then
+    amixer -c Headphones sset Headphone 100% unmute >/dev/null 2>&1 || true
+    amixer -c Headphones sset PCM 100% unmute >/dev/null 2>&1 || true
+    amixer -c Headphones sset SoftMaster 100% unmute >/dev/null 2>&1 || true
+else
+    amixer -c sndrpihifiberry sset SoftMaster 100% unmute >/dev/null 2>&1 || true
+fi
+alsactl store 2>/dev/null || true
+
 # --- 8. Hook scripts ---
 echo ""
 echo "[8/10] Setting up hook scripts..."
