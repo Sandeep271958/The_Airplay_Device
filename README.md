@@ -5,6 +5,8 @@ A production-grade Raspberry Pi audio receiver, dynamic ST7789 TFT display, real
 * **AirPlay Service Name:** `Sandy's Airplay Device`
 * **Network Hostname:** `sandy.local`
 * **Default SSH Login:** `ssh sandypi@sandy.local`
+* **Complete Technical Documentation:** [DOCUMENTATION.md](file:///Users/mouryasaisandeep/Desktop/Projects/Airplaydevice/DOCUMENTATION.md)
+* **Hardware Architecture & Wiring:** [hardware_architecture.md](file:///Users/mouryasaisandeep/Desktop/Projects/Airplaydevice/hardware_architecture.md)
 
 ---
 
