@@ -99,10 +99,9 @@ else
     echo "       → /etc/asound.conf (RPi Zero 2 W — PCM5102A I2S DAC with Speex resampler)"
 fi
 
-# Shairport-Sync (AirPlay receiver) — patch hook paths to actual install dir
-sed -E "s|/home/(pi|sandypi)/Airplaydevice|$INSTALL_DIR|g" \
-    "$INSTALL_DIR/shairport-sync.conf" | sudo tee /etc/shairport-sync.conf > /dev/null
-echo "       → /etc/shairport-sync.conf (paths patched, 44.1kHz rate locked)"
+# Shairport-Sync (AirPlay receiver) — direct hardware + visualizer clone
+sudo cp "$INSTALL_DIR/shairport-sync.conf" /etc/shairport-sync.conf
+echo "       → /etc/shairport-sync.conf (direct hardware output configured)"
 
 # --- 8. Hook scripts ---
 echo ""
@@ -123,8 +122,8 @@ fi
 sudo systemctl disable alsaloop.service 2>/dev/null || true
 sudo rm -f /etc/systemd/system/alsaloop.service 2>/dev/null || true
 
-# Patch the service files with the actual install directory
-sed -E "s|/home/(pi|sandypi)/Airplaydevice|$INSTALL_DIR|g" \
+# Patch the service file with the actual install directory
+sed "s#/home/sandypi/Airplaydevice#$INSTALL_DIR#g; s#/home/pi/Airplaydevice#$INSTALL_DIR#g" \
     "$INSTALL_DIR/airplaydevice.service" | sudo tee /etc/systemd/system/airplaydevice.service > /dev/null
 
 sudo systemctl daemon-reload
@@ -207,7 +206,7 @@ else
     echo "    ✓ PCM5102A I2S DAC overlay configured (dtoverlay=hifiberry-dac)"
     echo "    ✓ Software SPI Bus 1 configured for ST7789 TFT display"
 fi
-echo "    ✓ Systemd services (airplaydevice, alsaloop, shairport-sync) enabled"
+echo "    ✓ Systemd services (airplaydevice, shairport-sync) enabled (Direct Hardware Output)"
 echo ""
 echo "  PLEASE REBOOT TO APPLY ALL HARDWARE OVERLAYS & AUDIO FILTERS:"
 echo "     sudo reboot"
