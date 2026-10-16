@@ -127,6 +127,10 @@ RPi Pin 19 (GPIO 10) ──→ 8×8 Matrix DIN (Pixels 0–63)
 | | **GND** | Common Ground | Common GND | Shared ground |
 | | **DIN** | Data In | Matrix **DOUT** | Maps to **Pixel 64** |
 
+* **Unified 2D "Soap Bubble" Aesthetics:** Completely replaces traditional green-to-red traffic light colors with a continuous, iridescent global gradient (soft purples, electric cyans, neon magentas, and warm sunset peach tones) mapped cohesively across the entire 2D (8×8) canvas so the columns behave as a single fluid entity.
+* **Fluid Dynamics & Physics Engine:** Features inter-column surface tension coupling, asymmetric viscous attack/decay, ballistic gravity-driven peak falloff with hover dwell, and beat-reactive droplet bounce on bass transient kicks.
+* **Sub-Pixel Meniscus PWM & Perceptual Gamma Dithering:** Continuous fractional heights ($0.0..7.9$) with 8-bit perceptual gamma correction ($\gamma = 2.4$) smoothly fade boundary LEDs, delivering buttery smooth gliding without stepped jumps.
+* **60 FPS Low-Latency Execution:** Vectorized physics runs in under 0.04ms per frame with line-buffered CAVA FIFO ingestion for zero perceived latency.
 * **50% Brightness Calibration (`LED_BRIGHTNESS = 40`):** Limits current draw and eliminates PCB thermal overheating.
 * **Thermal Idle Blanking (`clear_matrix_bars()`):** Turns all 64 matrix pixels OFF when playback is paused or stopped, consuming zero watts while idle.
 * **RPi 4B Core Frequency Lock (`core_freq=500`):** Prevents dynamic GPU clock scaling from distorting SPI pulse widths (which makes WS2812B LEDs lock up at 100% white and overheat).

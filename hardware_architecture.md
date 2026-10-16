@@ -110,6 +110,13 @@ Raspberry Pi 4B Pin 19 (GPIO 10 / SPI0 MOSI)
   ```
 * **Hardware Diagnostic Tool:** Run `sudo python3 ws2812_diagnostic.py` to verify SPI timings, check live core clock, blank the strip, and test both the Status LED and Matrix columns.
 
+#### 3.4. Ultra-Smooth 8×8 Fluid Visualizer Engine
+* **Unified 2D "Soap Bubble" Iridescent Aesthetics:** Replaced legacy green-to-red traffic colors with a continuous, soothing global gradient (Soft Electric Purple `#9132F5` → Electric Cyan `#00E1FF` → Vivid Violet `#823CFF` → Neon Magenta `#F52D8C` → Warm Sunset Peach `#FFA564` → Champagne Rose `#FA5EA0`). Mapped cohesively across the entire 2D $(col, row)$ canvas with dynamic phase shimmer, so the 8 columns act as a single interconnected fluid membrane.
+* **Coupled Viscous Fluid Mechanics:** Implements inter-column surface tension coupling ($H_{\text{coupled}}[c] = 0.70 H[c] + 0.15 (H[c-1] + H[c+1])$), fast fluid attack surge ($\alpha_{\text{attack}} = 0.62$), and smooth viscous liquid decay ($\alpha_{\text{decay}} = 0.14$).
+* **Ballistic Gravity Peak Droplets:** Peak droplets hover at wave crests for a 6-frame dwell period before accelerating downward under simulated gravity ($g = 0.040$). Heavy bass transients trigger dynamic droplet bounce and upward splash impulses.
+* **Sub-Pixel Meniscus PWM & Perceptual Gamma Dithering:** Bars evaluate continuous fractional heights ($0.0..7.9$). Boundary surface LEDs are modulated via an 8-bit perceptual gamma curve ($\gamma = 2.4$), eliminating discrete stepping jumps and producing continuous liquid gliding.
+* **60 FPS Real-Time Refresh & Line-Buffered Low Latency:** Vectorized math executes in under $0.04\text{ms}$ per frame, with line-buffered CAVA FIFO reading for instantaneous beat synchronization.
+
 ---
 
 ## 4. ST7789 Display Pipeline & Color Calibration

@@ -201,6 +201,47 @@ try:
     report.log_pass("WS2812B", "Idle / Pause Matrix Blanking",
                     "clear_matrix_bars() correctly blanks all 64 matrix pixels when playback is idle/paused")
 
+    # 5. Soap Bubble 2D Iridescent Palette & Zero Traffic Light Verification
+    from main import matrix_visualizer
+    palette = matrix_visualizer.palette
+    has_traffic_green = any(g > 200 and r < 40 and b < 40 for (r, g, b) in palette)
+    has_traffic_red = any(r > 230 and g < 20 and b < 20 for (r, g, b) in palette)
+    if len(palette) == 512 and not has_traffic_green and not has_traffic_red:
+        report.log_pass("WS2812B", "Soap Bubble Iridescent Palette (Zero Traffic Colors)",
+                        "Verified 512-entry smooth global gradient blending soft purple, cyan, magenta & peach without green/red traffic colors")
+    else:
+        report.log_fail("WS2812B", "Soap Bubble Iridescent Palette (Zero Traffic Colors)",
+                        f"Failed: len={len(palette)}, traffic_green={has_traffic_green}, traffic_red={has_traffic_red}")
+
+    # 6. Fluid Dynamics & Gravity-Based Peak Droplets
+    matrix_visualizer.reset()
+    # Step 1: Bass surge
+    matrix_visualizer.update_and_render([250, 200, 150, 100, 80, 60, 40, 20], strip)
+    h_surge = matrix_visualizer.H[0]
+    p_surge = matrix_visualizer.peak_pos[0]
+    # Step 2: Sudden drop to 0
+    for _ in range(10):
+        matrix_visualizer.update_and_render([0] * 8, strip)
+    h_decayed = matrix_visualizer.H[0]
+    p_decayed = matrix_visualizer.peak_pos[0]
+
+    if h_surge > 4.0 and h_decayed < h_surge and p_decayed <= p_surge:
+        report.log_pass("WS2812B", "Fluid Dynamics & Gravity Peak Falloff",
+                        f"Fluid surged to {h_surge:.1f}, decayed to {h_decayed:.1f}; peak droplet hovered & fell from {p_surge:.1f} to {p_decayed:.1f}")
+    else:
+        report.log_fail("WS2812B", "Fluid Dynamics & Gravity Peak Falloff",
+                        f"Physics failure: h_surge={h_surge}, h_decayed={h_decayed}, p_surge={p_surge}, p_decayed={p_decayed}")
+
+    # 7. Sub-Pixel Meniscus PWM & Perceptual Gamma Dithering
+    matrix_visualizer.reset()
+    lut_mid = matrix_visualizer.gamma_lut[128]
+    if 40 <= lut_mid <= 65 and len(matrix_visualizer.gamma_lut) == 256:
+        report.log_pass("WS2812B", "Sub-Pixel PWM & Gamma 2.4 Dithering",
+                        f"Verified 256-level perceptual gamma curve (midpoint 128 maps to PWM {lut_mid} for linear eye perception)")
+    else:
+        report.log_fail("WS2812B", "Sub-Pixel PWM & Gamma 2.4 Dithering",
+                        f"Unexpected gamma midpoint: {lut_mid} (expected 40..65)")
+
 except Exception as e:
     report.log_fail("WS2812B", "Module Inspection Error", str(e))
 
