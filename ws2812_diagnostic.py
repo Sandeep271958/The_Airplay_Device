@@ -104,9 +104,17 @@ print("\n[DIAGNOSTIC 4/5] Initializing WS2812B via rpi_ws281x:")
 try:
     import rpi_ws281x as ws
 except ImportError:
-    print("  ✗ rpi_ws281x module not installed in current Python environment!")
-    print("    Install: pip install rpi-ws281x")
-    sys.exit(1)
+    # Check if project virtual environment python exists
+    venv_py = os.path.expanduser("~/Airplaydevice/venv/bin/python")
+    if not os.path.exists(venv_py):
+        venv_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "venv", "bin", "python")
+    if os.path.exists(venv_py) and sys.executable != venv_py:
+        print(f"  → Switching to project virtualenv Python: {venv_py}\n")
+        os.execv(venv_py, [venv_py] + sys.argv)
+    else:
+        print("  ✗ rpi_ws281x module not installed in current Python environment!")
+        print("    Install: ~/Airplaydevice/venv/bin/pip install rpi-ws281x")
+        sys.exit(1)
 
 LED_COUNT        = 65                    # 64 matrix LEDs + 1 status LED
 LED_PIN          = 10                    # GPIO 10 (SPI0 MOSI / Physical Pin 19)
@@ -170,20 +178,17 @@ strip.setPixelColor(64, OFF)
 strip.show()
 
 # Test Step C: 8x8 Matrix Column Sweep (Pixels 0–63)
-print("\n  [Step C] Testing 8x8 Matrix Columns (Pixels 0–63)...")
+print("\n  [Step C] Testing 8x8 Matrix Columns (Pixels 0–63, Progressive layout)...")
 for col in range(8):
     # Blank matrix
     for i in range(64):
         strip.setPixelColor(i, OFF)
-    # Light current column in serpentine order
+    # Light current column in progressive order (bottom -> top)
     for row in range(8):
-        if col % 2 == 0:
-            idx = col * 8 + row
-        else:
-            idx = col * 8 + (7 - row)
+        idx = col * 8 + row
         strip.setPixelColor(idx, AMBER)
     strip.show()
-    print(f"    → Column {col} lit (pixels {col*8}..{col*8+7})")
+    print(f"    → Column {col} lit (pixels {col*8}..{col*8+7}, bottom -> top)")
     time.sleep(0.35)
 
 # Test Step D: Clean shutdown

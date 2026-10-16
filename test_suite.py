@@ -179,24 +179,21 @@ try:
         report.log_fail("WS2812B", "50% Brightness Thermal Calibration",
                         f"Expected LED_BRIGHTNESS=40, got {LED_BRIGHTNESS}")
 
-    # 3. 8×8 Matrix Serpentine Pixel Index Mapping (Unique 0–63 Coverage)
+    # 3. 8×8 Matrix Progressive Pixel Index Mapping (Unique 0–63 Coverage, Bottom-to-Top)
     indices = []
     for col in range(8):
         for row in range(8):
-            if col % 2 == 0:
-                idx = col * 8 + row
-            else:
-                idx = col * 8 + (7 - row)
+            idx = col * 8 + row
             indices.append(idx)
 
     unique_indices = set(indices)
-    first_pixel = indices[0]      # col 0, row 0 (matrix start) -> index 0
-    col7_row0   = indices[7 * 8]  # col 7, row 0 (bottom of col 7) -> index 63
-    if len(indices) == 64 and unique_indices == set(range(64)) and first_pixel == 0 and col7_row0 == 63:
-        report.log_pass("WS2812B", "8×8 Serpentine Matrix Pixel Mapping",
-                        f"All 64 pixels mapped uniquely across 8 columns without overlap (Col0/Row0=idx 0, Col7/Row0=idx 63, Range=[0..63])")
+    first_pixel = indices[0]      # col 0, row 0 (Bar 1 bottom) -> index 0
+    last_pixel  = indices[-1]     # col 7, row 7 (Bar 8 top) -> index 63
+    if len(indices) == 64 and unique_indices == set(range(64)) and first_pixel == 0 and last_pixel == 63:
+        report.log_pass("WS2812B", "8×8 Progressive Matrix Pixel Mapping",
+                        f"All 64 pixels mapped progressively across 8 columns bottom-to-top (Bar1/Row0=idx 0, Bar8/Row7=idx 63, Range=[0..63])")
     else:
-        report.log_fail("WS2812B", "8×8 Serpentine Matrix Pixel Mapping",
+        report.log_fail("WS2812B", "8×8 Progressive Matrix Pixel Mapping",
                         f"Index mismatch: count={len(unique_indices)}, range=[{min(indices)}, {max(indices)}]")
 
     # 4. Idle / Pause Matrix Blanking (Zero Watts Thermal Protection)

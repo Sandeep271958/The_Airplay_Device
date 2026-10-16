@@ -75,7 +75,7 @@ Raspberry Pi 4B Pin 19 (GPIO 10 / SPI0 MOSI)
        ▼
 ┌───────────────────────────────┐
 │     8×8 Matrix LED Plate      │  Pixels 0–63 (64 LEDs)
-│  (DIN on Pin 19 / GPIO 10)    │  Serpentine zig-zag column mapping
+│  (DIN on Pin 19 / GPIO 10)    │  Progressive column mapping (all columns bottom → top)
 │             DOUT              │
 └──────────────┬────────────────┘
                │

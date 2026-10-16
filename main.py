@@ -63,7 +63,7 @@ except ImportError:
 #                                           Status LED DIN (Pixel 64)
 #
 # Hardware layout:
-#   - Pixels 0–63 : 8×8 LED Matrix (64 pixels, serpentine/zig-zag column wiring)
+#   - Pixels 0–63 : 8×8 LED Matrix (64 pixels, progressive column wiring, all bottom → top)
 #   - Pixel 64    : Single WS2812B Status LED connected to Matrix DOUT
 LED_COUNT        = 65                    # 64 matrix LEDs + 1 status LED
 LED_PIN          = 10                    # GPIO 10 (SPI0 MOSI / Physical Pin 19)
@@ -256,19 +256,18 @@ def write_matrix_bars(values):
 
     `values`  — list of 8 ints in range 0–255 from CAVA.
 
-    Assumes standard WS2812B 8×8 panel with serpentine (zig-zag) wiring:
-      Even columns (0, 2, 4, 6): data flows bottom → top
-      Odd  columns (1, 3, 5, 7): data flows top → bottom
+    Panel wiring: Progressive column layout (all columns flow bottom → top).
+      Bar 1 (col 0): pixels  0–7  (bottom → top)
+      Bar 2 (col 1): pixels  8–15 (bottom → top)
+      Bar 3 (col 2): pixels 16–23 (bottom → top)
+      ...
+      Bar 8 (col 7): pixels 56–63 (bottom → top)
     """
     for col in range(8):
         height = min(8, int(values[col] / 255.0 * 8))
         for row in range(8):
-            # Serpentine index for 8x8 matrix (pixels 0–63)
-            if col % 2 == 0:
-                idx = col * 8 + row           # bottom → top
-            else:
-                idx = col * 8 + (7 - row)     # top → bottom
-
+            # Progressive column index for 8x8 matrix (pixels 0–63)
+            idx = col * 8 + row
             strip.setPixelColor(
                 idx,
                 BAR_GRADIENT[row] if row < height else OFF,
