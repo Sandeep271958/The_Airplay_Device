@@ -1,15 +1,23 @@
 # =====================================================================
-# Add these lines to /boot/firmware/config.txt
+# RPi Zero 2 W PRODUCTION — Add these lines to /boot/firmware/config.txt
 # =====================================================================
 
-# Disable the default onboard audio (we use the I2S DAC instead)
+# Disable onboard audio (RPi Zero 2 W has no analog headphone jack)
 dtparam=audio=off
 
-# Enable the I2S DAC overlay (PCM5102A is hifiberry-dac compatible)
+# Enable the I2S DAC overlay (PCM5102A stereo DAC is hifiberry-dac compatible)
+# Wiring: BCK -> GPIO 18 (Pin 12), LRCK -> GPIO 19 (Pin 35), DATA -> GPIO 21 (Pin 40)
 dtoverlay=hifiberry-dac
 
-# Enable SPI interface (used by WS2812 LED driver)
+# Enable SPI0 interface (used by WS2812 LED driver on GPIO 10 / Pin 19)
 dtparam=spi=on
 
+# Lock GPU core frequency on BCM2837 (Zero 2 W) for stable WS2812B 800kHz SPI timing
+core_freq=400
+core_freq_min=400
+
 # Enable Software SPI (Bus 1) for the ST7789 TFT display
-dtoverlay=spi-gpio,sck_pin=5,mosi_pin=6,miso_pin=13,cs0_pin=25,spi_bus=1
+# Retains 100% IDENTICAL wiring to RPi 4B:
+# MOSI = GPIO 6 (Pin 31), SCK = GPIO 7 (Pin 26), CS = GPIO 25 (Pin 22)
+dtoverlay=spi-gpio,sck_pin=7,mosi_pin=6,cs0_pin=25,spi_bus=1
+
