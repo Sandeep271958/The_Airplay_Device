@@ -210,9 +210,9 @@ try:
 
     # Primary Color Calibration Screens
     cal_screens = [
-        ("RED",   (255, 0, 0),   "THIS MUST BE PURE RED",   "If this looks blue, run with --rgb"),
+        ("RED",   (255, 0, 0),   "THIS MUST BE PURE RED",   "If this looks blue, run with --bgr"),
         ("GREEN", (0, 255, 0),   "THIS MUST BE PURE GREEN", "Green color channel check"),
-        ("BLUE",  (0, 0, 255),   "THIS MUST BE PURE BLUE",  "If this looks red, run with --rgb"),
+        ("BLUE",  (0, 0, 255),   "THIS MUST BE PURE BLUE",  "If this looks red, run with --bgr"),
         ("BLACK", (0, 0, 0),     "INKY DEEP BLACK",         "If washed-out/grey, check inversion"),
     ]
 

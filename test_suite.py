@@ -155,7 +155,9 @@ try:
         try:
             import rpi_ws281x
         except ImportError:
-            sys.modules["rpi_ws281x"] = MagicMock()
+            ws_mock = MagicMock()
+            ws_mock.Color = lambda r, g, b: (r << 16) | (g << 8) | b
+            sys.modules["rpi_ws281x"] = ws_mock
 
     from main import (
         LED_COUNT, LED_PIN, LED_BRIGHTNESS,
@@ -241,6 +243,36 @@ try:
     else:
         report.log_fail("WS2812B", "Sub-Pixel PWM & Gamma 2.4 Dithering",
                         f"Unexpected gamma midpoint: {lut_mid} (expected 40..65)")
+
+    # 8. Inter-Column Pre-Diffusion & Pastel Milky Diffusion Baseline
+    # Check that minimum color channel floor across the palette is >= 85 (high luminance pastel undertone)
+    min_chan = min(min(r, g, b) for (r, g, b) in palette)
+
+    class _TestStrip:
+        def __init__(self):
+            self.pixels = [(0, 0, 0)] * 65
+        def setPixelColor(self, idx, color):
+            if isinstance(color, tuple):
+                self.pixels[idx] = color
+            else:
+                r = (color >> 16) & 0xFF
+                g = (color >> 8) & 0xFF
+                b = color & 0xFF
+                self.pixels[idx] = (r, g, b)
+
+    test_strip = _TestStrip()
+    matrix_visualizer.reset()
+    matrix_visualizer.update_and_render([220] * 8, test_strip)
+    col0_pix = [test_strip.pixels[r] for r in range(4)]
+    col1_pix = [test_strip.pixels[8 + r] for r in range(4)]
+    diff_smooth = all(abs(c1[2] - c0[2]) < 120 for c0, c1 in zip(col0_pix, col1_pix))
+
+    if min_chan >= 85 and diff_smooth:
+        report.log_pass("WS2812B", "Pastel Milky Diffusion & Spatial Color Merging",
+                        f"High-luminance baseline (min channel {min_chan} >= 85) & smooth inter-column pre-diffusion verified for paper diffuser")
+    else:
+        report.log_fail("WS2812B", "Pastel Milky Diffusion & Spatial Color Merging",
+                        f"Failed: min_channel={min_chan}, diff_smooth={diff_smooth}")
 
 except Exception as e:
     report.log_fail("WS2812B", "Module Inspection Error", str(e))

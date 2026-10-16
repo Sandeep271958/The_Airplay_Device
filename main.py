@@ -229,14 +229,15 @@ class MatrixVisualizer:
         # 8-bit Perceptual Gamma LUT (gamma = 2.4)
         self.gamma_lut = [int(round(255.0 * ((i / 255.0) ** 2.4))) for i in range(256)]
 
-        # Precomputed 512-entry Soap Bubble Iridescent Palette (Purple -> Cyan -> Violet -> Magenta -> Peach -> Rose)
+        # Lightened, Soft Pastel Soap Bubble Iridescent Palette (High Luminance, Milky Undertone)
+        # Specifically calibrated for paper diffusers to blend colors naturally without dark saturated spots
         nodes = [
-            (140, 45,  245),  # Soft Electric Purple
-            (0,   215, 255),  # Electric Cyan
-            (130, 60,  255),  # Vivid Violet
-            (245, 40,  135),  # Neon Magenta
-            (255, 150, 85),   # Warm Sunset Peach
-            (245, 90,  160),  # Champagne Rose
+            (180, 130, 255),  # Soft Light Lavender / Periwinkle (lifted from 140, 45, 245)
+            (90,  235, 255),  # Luminous Ice Cyan / Aqua (lifted from 0, 215, 255)
+            (175, 140, 255),  # Ethereal Soft Violet / Lilac (lifted from 130, 60, 255)
+            (255, 125, 195),  # Glowing Rose Orchid / Pastel Magenta (lifted from 245, 40, 135)
+            (255, 195, 145),  # Warm Luminous Peach / Soft Apricot (lifted from 255, 150, 85)
+            (255, 160, 215),  # Champagne Blush / Pastel Pink (lifted from 245, 90, 160)
         ]
         self.palette = []
         for i in range(512):
@@ -272,8 +273,8 @@ class MatrixVisualizer:
         self.prev_bass = bass
         is_kick = delta_bass > 45.0
 
-        # Shimmer phase advances smoothly; accelerates slightly on beat drops
-        self.phase += 0.06 if not is_kick else 0.12
+        # Global drifting color phase: full gentle cycle every ~15 seconds at 60 FPS
+        self.phase = (self.phase + (0.0012 if not is_kick else 0.0030)) % 1.0
 
         # 2. Normalized target heights (0.0 .. 7.9)
         targets = [min(7.9, max(0.0, v / 255.0 * 7.9)) for v in raw_cava_values]
@@ -310,7 +311,10 @@ class MatrixVisualizer:
                         self.peak_pos[c] = self.H[c]
                         self.peak_vel[c] = 0.0
 
-        # 5. Render 64 pixels with sub-pixel PWM dithering & 2D Soap Bubble gradient
+        # 5. Calculate raw 8x8 cell colors with gentle 2D spatial gradients
+        grid_rgb = [[(0, 0, 0)] * 8 for _ in range(8)]
+        grid_cov = [[0.0] * 8 for _ in range(8)]
+
         for c in range(8):
             h = self.H[c]
             p = self.peak_pos[c]
@@ -336,30 +340,67 @@ class MatrixVisualizer:
                             cov = d_int
                             is_peak = True
 
+                grid_cov[c][r] = cov
+
+                if cov <= 0.01:
+                    grid_rgb[c][r] = (0, 0, 0)
+                    continue
+
+                # 2D global soap bubble coordinate: drifting color wheel + gentle 2D spatial gradient
+                u = c / 7.0
+                v = r / 7.0
+                phi = (self.phase + 0.28 * u + 0.22 * v + 0.06 * math.sin(2.0 * u - 1.4 * v)) % 1.0
+                lut_idx = int(phi * 512) % 512
+                br, bg, bb = self.palette[lut_idx]
+
+                # Glowing pearl peak droplet accent
+                if is_peak:
+                    br = int(br * 0.25 + 255 * 0.75)
+                    bg = int(bg * 0.25 + 235 * 0.75)
+                    bb = int(bb * 0.25 + 205 * 0.75)
+
+                grid_rgb[c][r] = (br, bg, bb)
+
+        # 6. Horizontal 3-tap spatial color merging across columns (Software Pre-Diffusion)
+        # Pre-diffuses adjacent columns so they merge into a single fluid entity through paper
+        merged_rgb = [[(0, 0, 0)] * 8 for _ in range(8)]
+        for r in range(8):
+            for c in range(8):
+                if grid_cov[c][r] <= 0.01:
+                    merged_rgb[c][r] = (0, 0, 0)
+                    continue
+
+                c_left = max(0, c - 1)
+                c_right = min(7, c + 1)
+
+                r_curr, g_curr, b_curr = grid_rgb[c][r]
+                # If neighbors are lit, blend their color; otherwise use current
+                r_l, g_l, b_l = grid_rgb[c_left][r] if grid_cov[c_left][r] > 0.01 else (r_curr, g_curr, b_curr)
+                r_r, g_r, b_r = grid_rgb[c_right][r] if grid_cov[c_right][r] > 0.01 else (r_curr, g_curr, b_curr)
+
+                mb_r = int(0.70 * r_curr + 0.15 * (r_l + r_r))
+                mb_g = int(0.70 * g_curr + 0.15 * (g_l + g_r))
+                mb_b = int(0.70 * b_curr + 0.15 * (b_l + b_r))
+
+                merged_rgb[c][r] = (mb_r, mb_g, mb_b)
+
+        # 7. Write to strip with soft meniscus gamma curve (cov ** 1.15) for paper diffusion
+        for c in range(8):
+            for r in range(8):
                 idx = c * 8 + r   # progressive column index: Bar col, Row r (bottom -> top)
+                cov = grid_cov[c][r]
 
                 if cov <= 0.01:
                     strip_obj.setPixelColor(idx, OFF)
                     continue
 
-                # 2D global soap bubble coordinate (cohesive across all 8 columns)
-                u = c / 7.0
-                v = r / 7.0
-                phi = (0.50 * u + 0.40 * v + 0.12 * math.sin(2.4 * u - 1.6 * v + self.phase)) % 1.0
-                lut_idx = int(phi * 512) % 512
-                br, bg, bb = self.palette[lut_idx]
+                mb_r, mb_g, mb_b = merged_rgb[c][r]
 
-                # Peak droplet accent: blend with warm champagne peach
-                if is_peak:
-                    br = int(br * 0.35 + 255 * 0.65)
-                    bg = int(bg * 0.35 + 215 * 0.65)
-                    bb = int(bb * 0.35 + 170 * 0.65)
-
-                # Perceptual gamma-corrected brightness
-                gamma_cov = cov ** 1.7
-                r_out = self.gamma_lut[min(255, int(br * gamma_cov))]
-                g_out = self.gamma_lut[min(255, int(bg * gamma_cov))]
-                b_out = self.gamma_lut[min(255, int(bb * gamma_cov))]
+                # Soft meniscus coverage curve (cov ** 1.15) provides gentle light transmission through paper
+                gamma_cov = cov ** 1.15
+                r_out = self.gamma_lut[min(255, int(mb_r * gamma_cov))]
+                g_out = self.gamma_lut[min(255, int(mb_g * gamma_cov))]
+                b_out = self.gamma_lut[min(255, int(mb_b * gamma_cov))]
 
                 strip_obj.setPixelColor(idx, C(r_out, g_out, b_out))
 
