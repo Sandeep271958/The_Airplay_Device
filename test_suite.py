@@ -649,6 +649,22 @@ try:
         report.log_pass("Assets", "sandy_logo.png", f"Found ({os.path.getsize(logo_path) // 1024} KB)")
     else:
         report.log_warn("Assets", "sandy_logo.png", "Boot logo not found in assets/")
+
+    # Inverted boot splash verification (Black Sandy logo on pure white background)
+    from tft_display import _load_splash_logo, render_splash_frame
+    splash_logo = _load_splash_logo(240, 320)
+    if splash_logo is not None:
+        splash_frame = render_splash_frame(240, 320, splash_logo, 0.5, 0.0)
+        import numpy as np
+        arr_splash = np.array(splash_frame)
+        corner_rgb = arr_splash[0, 0]
+        min_rgb = arr_splash.min()
+        if (corner_rgb == [255, 255, 255]).all() and min_rgb < 50:
+            report.log_pass("Boot Splash", "Inverted Theme (Black on White)",
+                            f"Verified pure white background (255,255,255) and black lettering (min={min_rgb})")
+        else:
+            report.log_fail("Boot Splash", "Inverted Theme (Black on White)",
+                            f"Unexpected colors: corner={corner_rgb}, min={min_rgb}")
 except Exception as e:
     report.log_fail("Typography", "Font Asset Load", str(e))
 

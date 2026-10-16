@@ -1439,9 +1439,9 @@ def _load_splash_logo(width, height):
     """
     Load and prepare the Sandy logo for the splash screen.
 
-    The logo PNG is white-on-light-background.  We extract just the
-    white lettering as a mask and composite it onto a black background
-    so it looks clean on the TFT.
+    Inverts the design for high contrast on generic TFT displays:
+    extracts the logo as black lettering with clean antialiased alpha,
+    ready to be composited onto a bright white background.
     """
     if not os.path.exists(SPLASH_LOGO):
         print(f"[TFT] Splash logo not found at {SPLASH_LOGO}")
@@ -1449,38 +1449,24 @@ def _load_splash_logo(width, height):
 
     try:
         logo = Image.open(SPLASH_LOGO).convert("RGBA")
+        arr = np.array(logo)
 
-        # Composite onto a black background to flatten alpha
-        black_bg = Image.new("RGBA", logo.size, (0, 0, 0, 255))
-        composite = Image.alpha_composite(black_bg, logo).convert("RGB")
+        # Alpha and luminance mask of the lettering
+        alpha = arr[:, :, 3].astype(np.float32) / 255.0
+        lum = arr[:, :, :3].mean(axis=2).astype(np.float32) / 255.0
 
-        # ---- Vectorised pixel processing via numpy (fast on Pi Zero 2W) ----
-        arr = np.array(composite, dtype=np.int16)  # int16 to avoid overflow
-        bg_color = arr[2, 2]  # sample top-left corner for background color
+        # Lettering mask: smooth antialiased coverage
+        mask = np.clip(alpha * lum * 1.25, 0.0, 1.0)
 
-        # Manhattan distance from the background color for each pixel
-        dist = np.abs(arr - bg_color).sum(axis=2)
-        threshold = 30
+        # Black lettering on transparent background (RGBA)
+        h, w = mask.shape
+        rgba = np.zeros((h, w, 4), dtype=np.uint8)
+        rgba[:, :, 0] = 0   # R = 0 (solid black)
+        rgba[:, :, 1] = 0   # G = 0
+        rgba[:, :, 2] = 0   # B = 0
+        rgba[:, :, 3] = (mask * 255).astype(np.uint8)
 
-        # Luminance per pixel (mean of R, G, B)
-        lum = arr.mean(axis=2)
-
-        # Mask: pixels that ARE the background
-        mask_bg = dist < threshold
-        # Mask: non-background pixels that are bright (white fill of the logo)
-        mask_bright = (~mask_bg) & (lum > 200)
-        # Mask: non-background pixels that are darker (outlines)
-        mask_outline = (~mask_bg) & (~mask_bright)
-
-        # Apply: background → black, bright → white, outlines → brightened grey
-        arr[mask_bg] = [0, 0, 0]
-        arr[mask_bright] = [255, 255, 255]
-        outline_lum = np.clip(lum[mask_outline].astype(np.int16) + 60, 0, 255)
-        arr[mask_outline, 0] = outline_lum
-        arr[mask_outline, 1] = outline_lum
-        arr[mask_outline, 2] = outline_lum
-
-        rgb = Image.fromarray(arr.astype(np.uint8), "RGB")
+        img = Image.fromarray(rgba, "RGBA")
 
         # ---- Scale to fit display with padding ----
         pad = int(width * 0.1)
@@ -1488,14 +1474,14 @@ def _load_splash_logo(width, height):
         aspect = logo.size[0] / logo.size[1]
         target_h = int(target_w / aspect)
 
-        # Don't let it exceed 40% of display height (leave room for text)
+        # Don't let it exceed 35% of display height (leave room for text)
         max_h = int(height * 0.35)
         if target_h > max_h:
             target_h = max_h
             target_w = int(target_h * aspect)
 
-        rgb = rgb.resize((target_w, target_h), Image.LANCZOS)
-        return rgb
+        img = img.resize((target_w, target_h), Image.LANCZOS)
+        return img
 
     except Exception as e:
         print(f"[TFT] Error loading splash logo: {e}")
@@ -1506,22 +1492,26 @@ def render_splash_frame(width, height, logo_img, progress, glow_phase):
     """
     Render a single frame of the boot splash animation.
 
+    Inverted theme: Black Sandy logo + dark text on pure white background
+    for high contrast and maximum readability on generic TFT panels.
+
     Args:
         width, height: display dimensions
-        logo_img: pre-processed PIL Image of the Sandy logo (white on black)
+        logo_img: pre-processed RGBA PIL Image of the Sandy logo (black lettering)
         progress: 0.0 → 1.0 over the full SPLASH_DURATION
         glow_phase: current glow oscillation value (for breathing effect)
 
     Animation timeline (3 seconds total):
-        0.0 – 0.33  : Fade in (logo + text emerge from black)
-        0.33 – 0.83 : Hold with subtle glow pulse
-        0.83 – 1.0  : Fade out to black
+        0.0 – 0.33  : Fade in (black logo + text emerge onto white background)
+        0.33 – 0.83 : Hold with subtle breathing glow pulse
+        0.83 – 1.0  : Fade out smoothly back to white
     """
-    frame = Image.new("RGB", (width, height), (0, 0, 0))
+    # Pure white background
+    frame = Image.new("RGB", (width, height), (255, 255, 255))
 
     # Calculate opacity based on timeline phase
     if progress < 0.33:
-        # Phase 1: Fade in  (0% → 100% over first second)
+        # Phase 1: Fade in (0% → 100% over first second)
         alpha = progress / 0.33
         # Ease-out curve for a more polished feel
         alpha = 1.0 - (1.0 - alpha) ** 2.5
@@ -1537,7 +1527,7 @@ def render_splash_frame(width, height, logo_img, progress, glow_phase):
 
     alpha = max(0.0, min(1.0, alpha))
 
-    # Glow effect: subtle brightness oscillation during hold phase
+    # Glow effect: subtle contrast breathing during hold phase
     if 0.33 <= progress <= 0.83:
         glow = 0.85 + 0.15 * math.sin(glow_phase)
     else:
@@ -1546,16 +1536,19 @@ def render_splash_frame(width, height, logo_img, progress, glow_phase):
     brightness = alpha * glow
 
     if logo_img and brightness > 0.01:
-        # Apply brightness to the logo
-        logo_frame = logo_img.copy()
-        # Multiply all pixel values by brightness
-        enhancer = ImageEnhance.Brightness(logo_frame)
-        logo_frame = enhancer.enhance(brightness)
-
         # Center the logo vertically in the EXACT center of the screen
-        lx = (width - logo_frame.size[0]) // 2
-        ly = (height - logo_frame.size[1]) // 2
-        frame.paste(logo_frame, (lx, ly))
+        lx = (width - logo_img.size[0]) // 2
+        ly = (height - logo_img.size[1]) // 2
+
+        # Scale the logo alpha channel by brightness for smooth fading & glow
+        if logo_img.mode == "RGBA":
+            logo_frame = logo_img.copy()
+            arr_a = np.array(logo_frame.getchannel("A"), dtype=np.float32)
+            arr_a = np.clip(arr_a * brightness, 0, 255).astype(np.uint8)
+            logo_frame.putalpha(Image.fromarray(arr_a))
+            frame.paste(logo_frame, (lx, ly), logo_frame)
+        else:
+            frame.paste(logo_img, (lx, ly))
 
         # "Designed by" text — tiny, just above the logo
         draw = ImageDraw.Draw(frame)
@@ -1566,10 +1559,11 @@ def render_splash_frame(width, height, logo_img, progress, glow_phase):
         tx = (width - tw) // 2
         ty = ly - int(16 * _scale)
 
-        # Apply same brightness to text
-        text_brightness = int(180 * brightness)
+        # Inverted text fill: fades in from pure white (255) to sleek dark charcoal (~50)
+        # Using the exact same brightness (alpha * glow) curve
+        text_val = int(255 - 205 * brightness)
         draw.text((tx, ty), text, font=designed_font,
-                  fill=(text_brightness, text_brightness, text_brightness))
+                  fill=(text_val, text_val, text_val))
 
     return frame
 
@@ -1655,7 +1649,7 @@ class DisplayController:
 
         if logo is None:
             # No logo file — show a simple text-only splash instead
-            frame = Image.new("RGB", (self.w, self.h), (0, 0, 0))
+            frame = Image.new("RGB", (self.w, self.h), (255, 255, 255))
             draw = ImageDraw.Draw(frame)
             # "Sandy" in large text (centered vertically in display)
             sandy_font = _load_font_bold(int(42 * _scale))
@@ -1664,13 +1658,13 @@ class DisplayController:
             th = bbox[3] - bbox[1]
             sandy_y = (self.h - th) // 2
             draw.text(((self.w - tw) // 2, sandy_y),
-                      "Sandy", font=sandy_font, fill=(255, 255, 255))
+                      "Sandy", font=sandy_font, fill=(0, 0, 0))
             # "Designed by" above
             designed_font = _load_font(max(8, int(9 * _scale)))
             bbox2 = draw.textbbox((0, 0), "Designed by", font=designed_font)
             tw2 = bbox2[2] - bbox2[0]
             draw.text(((self.w - tw2) // 2, sandy_y - int(16 * _scale)),
-                      "Designed by", font=designed_font, fill=(180, 180, 180))
+                      "Designed by", font=designed_font, fill=(60, 60, 60))
             self.backend.show(frame)
             time.sleep(SPLASH_DURATION)
             self.backend.clear()
