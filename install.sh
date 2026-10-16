@@ -126,26 +126,23 @@ echo "       → /usr/local/bin/airplay_on_event.sh installed"
 
 # --- 9. Systemd services ---
 echo ""
-echo "[9/10] Installing systemd services (Direct Hardware Pipeline)..."
+echo "[9/10] Installing systemd services..."
 
-# Ensure legacy alsaloop service is stopped and removed (replaced by ALSA multi/route)
-if systemctl is-active --quiet alsaloop.service 2>/dev/null; then
-    sudo systemctl stop alsaloop.service 2>/dev/null || true
-fi
-sudo systemctl disable alsaloop.service 2>/dev/null || true
-sudo rm -f /etc/systemd/system/alsaloop.service 2>/dev/null || true
-
-# Patch the service file with the actual install directory
+# Patch service files with actual install directory
 sed "s#/home/sandypi/Airplaydevice#$INSTALL_DIR#g; s#/home/pi/Airplaydevice#$INSTALL_DIR#g" \
     "$INSTALL_DIR/airplaydevice.service" | sudo tee /etc/systemd/system/airplaydevice.service > /dev/null
 
+sed "s#/home/sandypi/Airplaydevice#$INSTALL_DIR#g; s#/home/pi/Airplaydevice#$INSTALL_DIR#g" \
+    "$INSTALL_DIR/alsaloop.service" | sudo tee /etc/systemd/system/alsaloop.service > /dev/null
+
 sudo systemctl daemon-reload
 sudo systemctl enable shairport-sync.service
+sudo systemctl enable alsaloop.service
 sudo systemctl enable airplaydevice.service
 
 echo "       → airplaydevice.service enabled"
-echo "       → shairport-sync.service enabled (direct hardware playback)"
-echo "       → alsaloop.service permanently disabled (replaced by zero-latency ALSA kernel multi/route)"
+echo "       → alsaloop.service enabled"
+echo "       → shairport-sync.service enabled"
 
 # --- 10. Boot & Hardware Configuration (Fully Automated) ---
 echo ""

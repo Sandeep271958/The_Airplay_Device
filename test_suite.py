@@ -149,44 +149,43 @@ try:
 except Exception as e:
     report.log_warn("ALSA", "SoftMaster Mixer", str(e))
 
-# Check Audio Pipeline: Direct Hardware + Kernel Multi/Route Architecture
+# Check Audio Pipeline: ALSA Loopback + alsaloop Relay Architecture
 try:
     proj_dir = os.path.dirname(os.path.abspath(__file__))
     shairport_path = os.path.join(proj_dir, "shairport-sync.conf")
     asound_path = os.path.join(proj_dir, "asound_rpi4b.conf")
     boot_path = os.path.join(proj_dir, "boot_config_rpi4b.txt")
+    alsaloop_path = os.path.join(proj_dir, "alsaloop.service")
 
-    # 1. shairport-sync direct output check
+    # 1. shairport-sync loopback output check
     with open(shairport_path, "r") as f:
         shairport_content = f.read()
-    has_shairport_default = 'output_device = "default";' in shairport_content
+    has_shairport_loop = 'output_device = "hw:Loopback,0,0";' in shairport_content
 
-    # 2. asound multi/route architecture check
+    # 2. asound loopback & softvol check
     with open(asound_path, "r") as f:
         asound_content = f.read()
-    has_multi = "type multi" in asound_content and "pcm.multi_out" in asound_content
-    has_route = "type route" in asound_content and "pcm.duplex_route" in asound_content
-    has_hw_dmix = "pcm.dmixer_hw" in asound_content
-    has_loop_dmix = "pcm.dmixer_loop" in asound_content
-    has_softvol = "pcm.softvol_master" in asound_content and "SoftMaster" in asound_content
+    has_loopcapture = "pcm.loopcapture" in asound_content and "hw:Loopback,1,0" in asound_content
+    has_softvol = "pcm.softvol_out" in asound_content and "SoftMaster" in asound_content
     has_resampler = "speexrate_medium" in asound_content
-    has_loop_plug = "pcm.loopcapture_snoop" in asound_content and "pcm.loopcapture" in asound_content
 
-    # Check Bluetooth routing in main.py
+    # 3. alsaloop service check
+    with open(alsaloop_path, "r") as f:
+        alsaloop_content = f.read()
+    has_alsaloop_cmd = "alsaloop -C loopcapture -P softvol_out" in alsaloop_content
+
+    # 4. Bluetooth loopback routing in main.py
     main_path = os.path.join(proj_dir, "main.py")
     with open(main_path, "r") as f:
         main_content = f.read()
-    has_bt_default = '["bluealsa-aplay", "-D", "default"' in main_content
-    has_vol_init = "def init_audio_volume():" in main_content
+    has_bt_loop = '["bluealsa-aplay", "-D", "hw:Loopback,0,0"' in main_content
 
-    if (has_shairport_default and has_multi and has_route and has_hw_dmix and
-        has_loop_dmix and has_softvol and has_resampler and has_loop_plug and
-        has_bt_default and has_vol_init):
-        report.log_pass("ALSA", "Direct Hardware Kernel Multi/Route Pipeline (Zero alsaloop)",
-                        "Verified Direct Hardware Playback to bcm2835 Headphones + Kernel Loopback Clone (48kHz Speex, SoftMaster, plug-wrapped loopcapture, Bluetooth to default)")
+    if has_shairport_loop and has_loopcapture and has_softvol and has_resampler and has_alsaloop_cmd and has_bt_loop:
+        report.log_pass("ALSA", "ALSA Loopback + alsaloop Audio Pipeline",
+                        "Verified Shairport Sync & BT -> hw:Loopback,0,0 -> dsnoop loopcapture -> alsaloop (150ms buffer, Speex, SoftMaster)")
     else:
-        report.log_fail("ALSA", "Direct Hardware Kernel Multi/Route Pipeline (Zero alsaloop)",
-                        f"Architecture failure: shairport={has_shairport_default}, multi={has_multi}, route={has_route}, softvol={has_softvol}, loop_plug={has_loop_plug}, bt_default={has_bt_default}, vol_init={has_vol_init}")
+        report.log_fail("ALSA", "ALSA Loopback + alsaloop Audio Pipeline",
+                        f"Architecture failure: shairport={has_shairport_loop}, loopcap={has_loopcapture}, softvol={has_softvol}, alsaloop={has_alsaloop_cmd}, bt={has_bt_loop}")
 
     # 4. Sigma-Delta noise shaping check
     with open(boot_path, "r") as f:

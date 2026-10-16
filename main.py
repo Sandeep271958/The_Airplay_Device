@@ -807,17 +807,17 @@ def toggle_mode():
     """
     Hold RST for 1 second to switch audio modes.
 
-    Both modes feed audio into ALSA default, which routes directly
-    to the physical DAC while cloning to Loopback for CAVA analysis.
+    Both modes feed audio into the ALSA Loopback bus (hw:Loopback,0,0),
+    so CAVA visualisers and alsaloop relay to speakers run seamlessly.
     """
     if state.mode == AppState.MODE_AIRPLAY:
         print("[MODE] Switching → BLUETOOTH")
         subprocess.run(["sudo", "systemctl", "stop", "shairport-sync"], check=False)
         subprocess.run(["sudo", "bluetoothctl", "discoverable", "on"], check=False)
         subprocess.run(["sudo", "bluetoothctl", "pairable", "on"], check=False)
-        # bluealsa-aplay feeds BT audio into ALSA default (routes to DAC + CAVA loopback)
+        # bluealsa-aplay feeds BT audio into Loopback bus
         subprocess.Popen(
-            ["bluealsa-aplay", "-D", "default", "00:00:00:00:00:00"],
+            ["bluealsa-aplay", "-D", "hw:Loopback,0,0", "00:00:00:00:00:00"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         state.mode      = AppState.MODE_BLUETOOTH

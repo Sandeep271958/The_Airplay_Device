@@ -1,6 +1,6 @@
 [Unit]
 Description=AirPlay/Bluetooth Audio Receiver Controller
-After=network-online.target sound.target shairport-sync.service
+After=network-online.target sound.target shairport-sync.service alsaloop.service
 Wants=network-online.target
 
 [Service]
