@@ -16,6 +16,12 @@ dtparam=audio=on
 # Enable SPI interface (used by WS2812 LED driver on GPIO 10)
 dtparam=spi=on
 
+# Lock GPU core frequency to 500MHz (MANDATORY on RPi 4 for SPI WS2812B timing!)
+# Without this, dynamic clock scaling (200-500MHz) distorts SPI pulse widths,
+# causing WS2812B to decode all data as logic 1s (stuck at 100% white & overheating).
+core_freq=500
+core_freq_min=500
+
 # Restrict SPI0 to 1 CS (GPIO 8) — frees GPIO 7 (CE1) so SPI4 can claim it for SCLK!
 dtoverlay=spi0-1cs
 
@@ -25,3 +31,4 @@ dtoverlay=spi4-1cs,cs0_pin=25
 
 # Force audio output to 3.5mm jack (not HDMI)
 hdmi_ignore_edid_audio=1
+

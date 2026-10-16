@@ -100,6 +100,16 @@ Raspberry Pi 4B Pin 19 (GPIO 10 / SPI0 MOSI)
 * **50% Brightness Calibration (`LED_BRIGHTNESS = 40`):** WS2812B matrices generate intense heat when all 64 LEDs glow at high brightness on a small PCB. Master brightness is set to 40 (50% reduction from 80), providing vibrant, rich colors while running cool and safe.
 * **Idle / Pause Matrix Blanking (`clear_matrix_bars()`):** When playback is paused, stopped, or disconnected, all 64 matrix pixels are powered off immediately. Only the dedicated Status LED (Pixel 64) gently pulses or glows, eliminating thermal buildup and conserving power.
 
+#### Resolving "Stuck at Full Brightness White & Overheating" on Raspberry Pi 4B
+* **Root Cause (Dynamic Clock Scaling):** On Raspberry Pi 4B, the GPU core clock scales dynamically between 200 MHz (idle) and 500 MHz (active). Because the hardware SPI0 baud rate divider is tied directly to `core_freq`, when the Pi is idle, the SPI clock frequency slows from 2.4 MHz down to ~960 kHz.
+* **Bit Decoding Failure:** WS2812B protocol requires an 800 kHz bitstream where a logic 0 is a ~400ns pulse and a logic 1 is an ~850ns pulse. At 960 kHz, *every* pulse is stretched beyond 1000ns. The WS2812B decodes every single bit as logic 1, causing all 65 pixels to blast at 100% maximum brightness bluish-white (`0xFFFFFF`), pulling ~3.9A and overheating the board.
+* **The Fix (`/boot/firmware/config.txt`):**
+  ```ini
+  core_freq=500
+  core_freq_min=500
+  ```
+* **Hardware Diagnostic Tool:** Run `sudo python3 ws2812_diagnostic.py` to verify SPI timings, check live core clock, blank the strip, and test both the Status LED and Matrix columns.
+
 ---
 
 ## 4. ST7789 Display Pipeline & Color Calibration

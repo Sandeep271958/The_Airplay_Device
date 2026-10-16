@@ -125,6 +125,8 @@ RPi Pin 19 (GPIO 10) ──→ 8×8 Matrix DIN (Pixels 0–63)
 
 * **50% Brightness Calibration (`LED_BRIGHTNESS = 40`):** Limits current draw and eliminates PCB thermal overheating.
 * **Thermal Idle Blanking (`clear_matrix_bars()`):** Turns all 64 matrix pixels OFF when playback is paused or stopped, consuming zero watts while idle.
+* **RPi 4B Core Frequency Lock (`core_freq=500`):** Prevents dynamic GPU clock scaling from distorting SPI pulse widths (which makes WS2812B LEDs lock up at 100% white and overheat).
+* **Hardware Diagnostic:** Run `sudo python3 ws2812_diagnostic.py` to test wiring, blanking, and colors.
 
 ---
 

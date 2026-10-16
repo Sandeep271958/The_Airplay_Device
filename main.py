@@ -157,6 +157,17 @@ state = AppState()
 
 
 # =====================================================================
+# COLOUR HELPERS & PALETTE
+# =====================================================================
+
+C = ws.Color   # shorthand: C(red, green, blue)
+
+OFF   = C(0, 0, 0)
+WHITE = C(255, 255, 255)
+CYAN  = C(0, 255, 255)
+
+
+# =====================================================================
 # WS2812 STRIP  (initialised at module level so failures are caught early)
 # =====================================================================
 
@@ -171,23 +182,18 @@ strip_lock = threading.Lock()
 
 try:
     strip.begin()
-    print(f"[LED]  Strip initialised (SPI mode, GPIO 10 / Pin 19, {LED_COUNT} pixels: 64 Matrix + 1 Status, Brightness={LED_BRIGHTNESS})")
-except RuntimeError as e:
-    print(f"[LED]  FATAL — cannot initialise WS2812: {e}")
+    strip.setBrightness(LED_BRIGHTNESS)
+    # Immediately clear all pixels in buffer and transmit to hardware to blank bootup noise
+    for i in range(LED_COUNT):
+        strip.setPixelColor(i, OFF)
+    strip.show()
+    print(f"[LED]  Strip initialised and blanked (SPI mode, GPIO 10 / Pin 19, {LED_COUNT} pixels: 64 Matrix + 1 Status, Brightness={LED_BRIGHTNESS})")
+except Exception as e:
+    print(f"[LED]  FATAL — cannot initialise/blank WS2812: {e}")
     print("       ✦ Is SPI enabled?  sudo raspi-config → Interface Options → SPI")
     print("       ✦ Running as root? sudo python3 main.py")
+    print("       ✦ Is core_freq locked? Add core_freq=500 and core_freq_min=500 to /boot/firmware/config.txt")
     sys.exit(1)
-
-
-# =====================================================================
-# COLOUR HELPERS & PALETTE
-# =====================================================================
-
-C = ws.Color   # shorthand: C(red, green, blue)
-
-OFF   = C(0, 0, 0)
-WHITE = C(255, 255, 255)
-CYAN  = C(0, 255, 255)
 
 # Height-graduated gradient for each visualiser bar (row 0 = bottom, 7 = top).
 # Green at the base, ramping through yellow/orange to red at the peak —
@@ -335,31 +341,39 @@ def render_loop():
     """
     step = 0.0
     interval = 1.0 / TARGET_FPS
+    err_count = 0
 
     while True:
         t0 = time.monotonic()
 
-        with strip_lock:
-            # 1. 8×8 Matrix Visualiser (pixels 0–63)
-            # Only light the matrix when actively playing audio — saves power and prevents heat buildup!
-            if state.playing:
-                with _cava_lock:
-                    vals = list(_cava_vals)
-                write_matrix_bars(vals)
-            else:
-                clear_matrix_bars()
-                vals = [0] * 8
+        try:
+            with strip_lock:
+                # 1. 8×8 Matrix Visualiser (pixels 0–63)
+                # Only light the matrix when actively playing audio — saves power and prevents heat buildup!
+                if state.playing:
+                    with _cava_lock:
+                        vals = list(_cava_vals)
+                    write_matrix_bars(vals)
+                else:
+                    clear_matrix_bars()
+                    vals = [0] * 8
 
-            # 2. Status LED (pixel 64, connected to 8×8 matrix DOUT)
-            colour, step = compute_status_colour(step)
-            strip.setPixelColor(STATUS_LED_INDEX, colour)
+                # 2. Status LED (pixel 64, connected to 8×8 matrix DOUT)
+                colour, step = compute_status_colour(step)
+                strip.setPixelColor(STATUS_LED_INDEX, colour)
 
-            # 3. Push entire 65-pixel buffer to hardware in one call
-            strip.show()
+                # 3. Push entire 65-pixel buffer to hardware in one call
+                strip.show()
 
-        # 4. Feed CAVA data to the TFT display controller
-        if TFT_AVAILABLE:
-            display_controller.set_cava_vals(vals)
+            # 4. Feed CAVA data to the TFT display controller
+            if TFT_AVAILABLE:
+                display_controller.set_cava_vals(vals)
+
+            err_count = 0
+        except Exception as e:
+            err_count += 1
+            if err_count <= 5 or err_count % 100 == 0:
+                print(f"[LED ERROR] Render loop exception (#{err_count}): {e}")
 
         elapsed = time.monotonic() - t0
         remaining = interval - elapsed
